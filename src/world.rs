@@ -194,6 +194,17 @@ impl World {
         for r in rooms {
             map.insert(r.name.clone(), r);
         }
+        debug_assert!(
+            map.contains_key(start),
+            "start room '{}' does not exist",
+            start
+        );
+        debug_assert!(
+            map.values()
+                .flat_map(|room| room.exits.values())
+                .all(|dest| map.contains_key(dest)),
+            "a room exit points at a non-existent destination room"
+        );
         World {
             rooms: map,
             current: start.to_string(),
@@ -362,6 +373,12 @@ impl World {
             let r = self.inventory.remove(i);
             self.moves += 1;
             return format!("You delete the {}. It dissolves into the void.", r.name);
+        }
+        // Deleting something in the room requires light: destroying what you
+        // cannot see is how estates lose data. Mirrors the guard on `take`.
+        if self.current_room().is_dark() {
+            return "It's too dark to safely delete anything here. Enable monitoring first."
+                .to_string();
         }
         // Deleting something in the room.
         if let Some(i) = self.find_in_room(target) {
@@ -630,6 +647,28 @@ mod tests {
         assert!(msg.contains("acquire"));
         assert!(w.inventory().contains("storage"));
         assert!(w.find_in_room("storage").is_none());
+    }
+
+    #[test]
+    fn cannot_drop_room_resource_in_dark() {
+        // Destroying what you cannot see is blocked, just like `take`.
+        let mut w = tiny_world();
+        w.go(Direction::North).unwrap(); // dark-rg
+        assert!(w.current_room().is_dark());
+        let msg = w.drop_item("anything");
+        assert!(msg.contains("dark"), "got: {msg}");
+    }
+
+    #[test]
+    fn can_drop_carried_resource_even_in_dark() {
+        // Inventory items are held, so releasing them does not need light.
+        let mut w = tiny_world();
+        w.take("storage"); // acquired in the lit room
+        w.go(Direction::North).unwrap(); // into the dark room
+        assert!(w.current_room().is_dark());
+        let msg = w.drop_item("storage");
+        assert!(msg.contains("delete"), "got: {msg}");
+        assert!(w.inventory().contains("nothing"));
     }
 
     #[test]

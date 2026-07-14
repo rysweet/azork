@@ -35,6 +35,19 @@ fn select_returns_az_backend_for_real_azure_ids() {
     }
 }
 
+#[test]
+fn is_recognized_accepts_documented_ids_and_rejects_typos() {
+    for id in ["mock", "MOCK", "az", "Azure", "real"] {
+        assert!(backend::is_recognized(id), "`{id}` should be recognized");
+    }
+    for id in ["", "azue", "aws", "nonsense", "offline"] {
+        assert!(
+            !backend::is_recognized(id),
+            "`{id}` should NOT be recognized"
+        );
+    }
+}
+
 // --- mock estate invariants ----------------------------------------------
 
 #[test]

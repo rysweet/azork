@@ -27,11 +27,19 @@ AZORK_BACKEND=az azork       # via environment
 
 | Id(s) | Backend | Requires credentials? | Network? |
 | --- | --- | --- | --- |
-| `mock` (and any unknown id) | Offline synthetic estate | No | No |
+| `mock` (default) | Offline synthetic estate | No | No |
 | `az`, `real`, `azure` | Live Azure via the `az` CLI | Yes (`az login`) | Yes |
 
-Unknown ids fall back to `mock` rather than erroring, so a typo never leaves you
-credential-gated.
+If no backend is requested, AzZork uses `mock`. If you *explicitly* request an
+unrecognized id (e.g. a typo like `--backend azue`, or `AZORK_BACKEND=aws`),
+AzZork still falls back to `mock` so you are never credential-gated — but it
+first prints a warning to stderr making clear you are on the offline estate, not
+your live subscription:
+
+```
+Warning: unknown backend 'azue'; falling back to the offline mock estate.
+Recognised backends: mock, az. (This is NOT your live Azure subscription.)
+```
 
 ## The `mock` backend (default)
 
