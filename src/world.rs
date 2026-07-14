@@ -184,7 +184,6 @@ impl World {
     }
 
     /// Seed the RNG deterministically (used by tests).
-    #[allow(dead_code)]
     pub fn seed_rng(&mut self, seed: u64) {
         self.rng = seed | 1;
     }
@@ -212,7 +211,6 @@ impl World {
             .expect("current room always exists")
     }
 
-    #[allow(dead_code)]
     pub fn moves(&self) -> u32 {
         self.moves
     }
