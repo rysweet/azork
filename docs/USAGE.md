@@ -130,8 +130,9 @@ You ward the webstore with a management lock, private endpoints, and
 encryption. A Grue recoils.
 ```
 
-A locked resource cannot be deleted until it is unlocked, protecting you from
-accidental destruction.
+A locked resource cannot be deleted, protecting you from accidental destruction.
+Locking is deliberately **one-way** — there is no `unlock` command — so lock only
+what you intend to keep.
 
 ### Confirmation prompts
 
@@ -214,3 +215,8 @@ Ranks by score:
 
 Your goal: `lock` every hazardous resource, `monitor` every dark room, and reach
 **Cloud Guardian**.
+
+> Note: a **cost overrun** (≥ $500/mo) reflects real spend and cannot be `lock`ed
+> away — only right-sizing the resource clears it. In the default mock estate the
+> `sqlserver` ($800/mo) leaves one immovable hazard, capping a perfect run at
+> **95/100** (still Cloud Guardian).

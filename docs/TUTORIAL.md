@@ -29,13 +29,15 @@ Check your starting posture:
 
 ```
 az> score
-Governance posture: 65/100  —  rank: Apprentice Admin
-Outstanding hazards: 7 (public/unencrypted/unlocked resources, cost overruns,
+Governance posture: 30/100  —  rank: Reckless Tinkerer
+Outstanding hazards: 14 (public/unencrypted/unlocked resources, cost overruns,
 unmonitored rooms)
 Moves taken: 0
 ```
 
-Seven hazards stand between you and a perfect score. Let's hunt them down.
+Fourteen hazards stand between you and Cloud Guardian: every resource starts
+unlocked, several are public or unencrypted, one room is dark, and the SQL
+server is bleeding cost. Let's hunt them down.
 
 ## 2. Secure the public web tier
 
@@ -164,9 +166,15 @@ encryption. A Grue recoils.
 
 ## 5. Deleting resources safely
 
-Suppose you decide the orphaned VM should go entirely. First unlock is required
-because `lock` protects against deletion — but you can `drop` an *unlocked*
-resource with confirmation. To demonstrate a cancelled delete:
+`drop` deletes a resource and `take` moves it into your inventory. Both ask for
+**y/N** confirmation and default to **No**, so a stray keystroke never destroys
+anything.
+
+Note that **`lock` is one-way**: there is no `unlock` command, and a locked
+resource refuses deletion (`The orphan-vm is locked. Unlock it before you can
+delete it.`). Locking is a deliberate, irreversible safeguard. Because you
+locked `orphan-vm` in the previous step, an attempted delete is safely blocked —
+and cancelling at the prompt leaves it untouched regardless:
 
 ```
 az> drop orphan-vm
@@ -174,7 +182,7 @@ DELETE 'orphan-vm'? This is destructive and cannot be undone. [y/N] n
 You stay your hand. The resource survives.
 ```
 
-`take` behaves the same way, moving a resource into your inventory:
+`take` moves a resource into your inventory (locked or not):
 
 ```
 az> take orphan-vm
@@ -207,11 +215,16 @@ Once every resource is locked and every room is monitored, check your posture:
 
 ```
 az> score
-Governance posture: 100/100  —  rank: Cloud Guardian
-Outstanding hazards: 0 (public/unencrypted/unlocked resources, cost overruns,
+Governance posture: 95/100  —  rank: Cloud Guardian
+Outstanding hazards: 1 (public/unencrypted/unlocked resources, cost overruns,
 unmonitored rooms)
 Moves taken: 18
 ```
+
+One hazard remains that you cannot lock away: the `sqlserver` costs `$800/mo`,
+and cost overruns (≥ $500/mo) reflect real spend rather than a security flag.
+That caps the mock estate at **95/100** — still **Cloud Guardian** territory.
+In real life this is your cue to right-size the resource.
 
 Leave the dungeon in triumph:
 
@@ -219,7 +232,7 @@ Leave the dungeon in triumph:
 az> quit
 
 You step back through the portal.
-Governance posture: 100/100  —  rank: Cloud Guardian
+Governance posture: 95/100  —  rank: Cloud Guardian
 ...
 ```
 
