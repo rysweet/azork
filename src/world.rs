@@ -23,6 +23,20 @@ fn name_matches(name: &str, query: &str) -> bool {
     lname == query || lname.starts_with(query)
 }
 
+/// Resolve a resource index by name, preferring an exact (case-insensitive)
+/// match before falling back to first prefix match.
+///
+/// Exact-match precedence avoids silently targeting the wrong resource when one
+/// name is a prefix of another (e.g. `storage` vs `storage-logs`) — a real risk
+/// on live `az` estates even though the mock estate has no such collisions.
+/// `query` is expected to already be lowercased.
+fn find_by_name(resources: &[Resource], query: &str) -> Option<usize> {
+    resources
+        .iter()
+        .position(|r| r.name.to_lowercase() == query)
+        .or_else(|| resources.iter().position(|r| name_matches(&r.name, query)))
+}
+
 /// A single Azure resource, rendered as a dungeon object or creature.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resource {
@@ -256,20 +270,16 @@ impl World {
         out
     }
 
-    /// Find a resource by name in the current room (case-insensitive prefix).
+    /// Find a resource by name in the current room. Prefers an exact
+    /// (case-insensitive) match, then falls back to first prefix match.
     fn find_in_room(&self, target: &str) -> Option<usize> {
         let t = target.to_lowercase();
-        self.current_room()
-            .resources
-            .iter()
-            .position(|r| name_matches(&r.name, &t))
+        find_by_name(&self.current_room().resources, &t)
     }
 
     fn find_in_inventory(&self, target: &str) -> Option<usize> {
         let t = target.to_lowercase();
-        self.inventory
-            .iter()
-            .position(|r| name_matches(&r.name, &t))
+        find_by_name(&self.inventory, &t)
     }
 
     /// Examine an object in the room or inventory (equivalent to `az ... show`).
@@ -620,6 +630,29 @@ mod tests {
         assert!(msg.contains("acquire"));
         assert!(w.inventory().contains("storage"));
         assert!(w.find_in_room("storage").is_none());
+    }
+
+    #[test]
+    fn find_prefers_exact_match_over_prefix() {
+        // `storage` is a prefix of `storage-logs`; an exact query for the
+        // shorter name must resolve to it, not the first prefix hit.
+        let room = Room::new("rg", "well lit", "eastus", true)
+            .with_resource(Resource::new(
+                "storage-logs",
+                "Microsoft.Storage/storageAccounts",
+                "Log archive.",
+            ))
+            .with_resource(Resource::new(
+                "storage",
+                "Microsoft.Storage/storageAccounts",
+                "Primary account.",
+            ));
+        let w = World::new(vec![room], "rg", "sub-mock-001");
+        let idx = w.find_in_room("storage").expect("should resolve");
+        assert_eq!(w.current_room().resources[idx].name, "storage");
+        // A non-exact prefix query still resolves to the first prefix match.
+        let pfx = w.find_in_room("storage-l").expect("prefix should resolve");
+        assert_eq!(w.current_room().resources[pfx].name, "storage-logs");
     }
 
     #[test]
