@@ -48,7 +48,17 @@ const HELP: &str = r#"Commands (Zork verbs -> Azure operations):
 Beware: acting in a dark (unmonitored) room invites a Grue to eat you."#;
 
 fn main() {
-    let backend_id = resolve_backend_id();
+    let requested_backend = resolve_backend_id();
+    if let Some(id) = &requested_backend {
+        if !backend::is_recognized(id) {
+            eprintln!(
+                "Warning: unknown backend '{}'; falling back to the offline mock estate. \
+                 Recognised backends: mock, az. (This is NOT your live Azure subscription.)",
+                id
+            );
+        }
+    }
+    let backend_id = requested_backend.unwrap_or_else(|| "mock".to_string());
     let backend = backend::select(&backend_id);
 
     let mut world = match backend.build_world() {
@@ -105,25 +115,29 @@ fn main() {
     }
 }
 
-/// Determine which backend to use from `--backend <id>` or `AZORK_BACKEND`.
-fn resolve_backend_id() -> String {
+/// Determine which backend the user explicitly requested via `--backend <id>`
+/// (or `-b`, `--backend=<id>`) or the `AZORK_BACKEND` env var.
+///
+/// Returns `None` when no backend was requested, so the caller can default to
+/// the mock estate. An explicit-but-empty request (e.g. a trailing `--backend`
+/// with no value) yields `Some("")`, which the caller treats as unrecognized
+/// and warns about rather than silently defaulting.
+fn resolve_backend_id() -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--backend" | "-b" => {
-                if i + 1 < args.len() {
-                    return args[i + 1].clone();
-                }
+                return Some(args.get(i + 1).cloned().unwrap_or_default());
             }
             other if other.starts_with("--backend=") => {
-                return other.trim_start_matches("--backend=").to_string();
+                return Some(other.trim_start_matches("--backend=").to_string());
             }
             _ => {}
         }
         i += 1;
     }
-    std::env::var("AZORK_BACKEND").unwrap_or_else(|_| "mock".to_string())
+    std::env::var("AZORK_BACKEND").ok()
 }
 
 /// Handle a single command. Returns `true` if the player asked to quit.

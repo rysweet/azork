@@ -21,10 +21,18 @@ pub trait Backend {
 
 /// Select a backend by identifier. Falls back to mock for anything unknown.
 ///
-/// Recognised ids: `mock` (default), `az` / `real`.
+/// Recognised ids: `mock` (default), `az` / `real` / `azure`.
 pub fn select(id: &str) -> Box<dyn Backend> {
     match id.to_lowercase().as_str() {
         "az" | "real" | "azure" => Box::new(az::AzBackend::new()),
         _ => Box::new(mock::MockBackend::new()),
     }
+}
+
+/// Whether `id` names a backend AzZork recognises.
+///
+/// Used to detect an explicitly-requested but misspelled backend so the caller
+/// can warn instead of silently serving the mock estate as though it were live.
+pub fn is_recognized(id: &str) -> bool {
+    matches!(id.to_lowercase().as_str(), "mock" | "az" | "real" | "azure")
 }
