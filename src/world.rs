@@ -14,6 +14,29 @@
 use crate::parser::Direction;
 use std::collections::HashMap;
 
+/// Case-insensitive resource-name match: exact or prefix.
+///
+/// `query` is expected to already be lowercased so the per-candidate name is
+/// only lowercased once per comparison.
+fn name_matches(name: &str, query: &str) -> bool {
+    let lname = name.to_lowercase();
+    lname == query || lname.starts_with(query)
+}
+
+/// Resolve a resource index by name, preferring an exact (case-insensitive)
+/// match before falling back to first prefix match.
+///
+/// Exact-match precedence avoids silently targeting the wrong resource when one
+/// name is a prefix of another (e.g. `storage` vs `storage-logs`) — a real risk
+/// on live `az` estates even though the mock estate has no such collisions.
+/// `query` is expected to already be lowercased.
+fn find_by_name(resources: &[Resource], query: &str) -> Option<usize> {
+    resources
+        .iter()
+        .position(|r| r.name.to_lowercase() == query)
+        .or_else(|| resources.iter().position(|r| name_matches(&r.name, query)))
+}
+
 /// A single Azure resource, rendered as a dungeon object or creature.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resource {
@@ -184,7 +207,6 @@ impl World {
     }
 
     /// Seed the RNG deterministically (used by tests).
-    #[allow(dead_code)]
     pub fn seed_rng(&mut self, seed: u64) {
         self.rng = seed | 1;
     }
@@ -212,7 +234,6 @@ impl World {
             .expect("current room always exists")
     }
 
-    #[allow(dead_code)]
     pub fn moves(&self) -> u32 {
         self.moves
     }
@@ -249,20 +270,16 @@ impl World {
         out
     }
 
-    /// Find a resource by name in the current room (case-insensitive prefix).
+    /// Find a resource by name in the current room. Prefers an exact
+    /// (case-insensitive) match, then falls back to first prefix match.
     fn find_in_room(&self, target: &str) -> Option<usize> {
         let t = target.to_lowercase();
-        self.current_room()
-            .resources
-            .iter()
-            .position(|r| r.name.to_lowercase() == t || r.name.to_lowercase().starts_with(&t))
+        find_by_name(&self.current_room().resources, &t)
     }
 
     fn find_in_inventory(&self, target: &str) -> Option<usize> {
         let t = target.to_lowercase();
-        self.inventory
-            .iter()
-            .position(|r| r.name.to_lowercase() == t || r.name.to_lowercase().starts_with(&t))
+        find_by_name(&self.inventory, &t)
     }
 
     /// Examine an object in the room or inventory (equivalent to `az ... show`).
@@ -288,7 +305,11 @@ impl World {
             r.kind,
             r.description,
             if r.public { "PUBLIC" } else { "private" },
-            if r.encrypted { "encrypted" } else { "UNENCRYPTED" },
+            if r.encrypted {
+                "encrypted"
+            } else {
+                "UNENCRYPTED"
+            },
             if r.locked { "locked" } else { "unlocked" },
             r.monthly_cost,
             r.hazard_report(),
@@ -383,6 +404,77 @@ impl World {
             return format!("You secure the carried {}.", name);
         }
         format!("There is no '{}' here to lock.", target)
+    }
+
+    /// Remove a management lock from a resource (in room or inventory) so it can
+    /// be changed or deleted again. Mirrors `az lock delete`.
+    pub fn unlock(&mut self, target: &str) -> String {
+        if let Some(i) = self.find_in_room(target) {
+            let r = &mut self.current_room_mut().resources[i];
+            let name = r.name.clone();
+            if !r.locked {
+                return format!("The {} is not locked.", name);
+            }
+            r.locked = false;
+            self.moves += 1;
+            return format!(
+                "You lift the management lock from the {}. It can now be changed or deleted \
+                 — but it is once more vulnerable.",
+                name
+            );
+        }
+        if let Some(i) = self.find_in_inventory(target) {
+            let r = &mut self.inventory[i];
+            let name = r.name.clone();
+            if !r.locked {
+                return format!("The carried {} is not locked.", name);
+            }
+            r.locked = false;
+            self.moves += 1;
+            return format!("You remove the lock from the carried {}.", name);
+        }
+        format!("There is no '{}' here to unlock.", target)
+    }
+
+    /// Right-size a resource to cut runaway monthly cost (mirrors changing a SKU
+    /// or scaling down a tier). Roughly halves the cost, clearing the
+    /// cost-overrun hazard once it drops below the $500/mo threshold.
+    pub fn resize(&mut self, target: &str) -> String {
+        let apply = |r: &mut Resource| -> String {
+            let name = r.name.clone();
+            if r.monthly_cost == 0 {
+                return format!(
+                    "The {} costs nothing to run; there is nothing to right-size.",
+                    name
+                );
+            }
+            let before = r.monthly_cost;
+            let after = before / 2;
+            r.monthly_cost = after;
+            if before >= 500 && after < 500 {
+                format!(
+                    "You right-size the {} to a reserved tier: ~${}/mo down to ~${}/mo. \
+                     The cost-overrun Grue loses its scent.",
+                    name, before, after
+                )
+            } else {
+                format!(
+                    "You right-size the {}: ~${}/mo down to ~${}/mo.",
+                    name, before, after
+                )
+            }
+        };
+        if let Some(i) = self.find_in_room(target) {
+            let msg = apply(&mut self.current_room_mut().resources[i]);
+            self.moves += 1;
+            return msg;
+        }
+        if let Some(i) = self.find_in_inventory(target) {
+            let msg = apply(&mut self.inventory[i]);
+            self.moves += 1;
+            return msg;
+        }
+        format!("There is no '{}' here to right-size.", target)
     }
 
     /// Enable monitoring on the current room — lights it and banishes the Grue.
@@ -482,19 +574,25 @@ mod tests {
     use super::*;
 
     fn tiny_world() -> World {
-        let lit = Room::new("prod-rg", "A humming, well-lit datacenter aisle.", "eastus", true)
-            .with_exit(Direction::North, "dark-rg")
-            .with_resource({
-                let mut r = Resource::new(
-                    "storage",
-                    "Microsoft.Storage/storageAccounts",
-                    "A squat storage account.",
-                );
-                r.public = true;
-                r.encrypted = false;
-                r
-            });
-        let dark = Room::new("dark-rg", "?", "westus", false).with_exit(Direction::South, "prod-rg");
+        let lit = Room::new(
+            "prod-rg",
+            "A humming, well-lit datacenter aisle.",
+            "eastus",
+            true,
+        )
+        .with_exit(Direction::North, "dark-rg")
+        .with_resource({
+            let mut r = Resource::new(
+                "storage",
+                "Microsoft.Storage/storageAccounts",
+                "A squat storage account.",
+            );
+            r.public = true;
+            r.encrypted = false;
+            r
+        });
+        let dark =
+            Room::new("dark-rg", "?", "westus", false).with_exit(Direction::South, "prod-rg");
         World::new(vec![lit, dark], "prod-rg", "sub-mock-001")
     }
 
@@ -535,6 +633,29 @@ mod tests {
     }
 
     #[test]
+    fn find_prefers_exact_match_over_prefix() {
+        // `storage` is a prefix of `storage-logs`; an exact query for the
+        // shorter name must resolve to it, not the first prefix hit.
+        let room = Room::new("rg", "well lit", "eastus", true)
+            .with_resource(Resource::new(
+                "storage-logs",
+                "Microsoft.Storage/storageAccounts",
+                "Log archive.",
+            ))
+            .with_resource(Resource::new(
+                "storage",
+                "Microsoft.Storage/storageAccounts",
+                "Primary account.",
+            ));
+        let w = World::new(vec![room], "rg", "sub-mock-001");
+        let idx = w.find_in_room("storage").expect("should resolve");
+        assert_eq!(w.current_room().resources[idx].name, "storage");
+        // A non-exact prefix query still resolves to the first prefix match.
+        let pfx = w.find_in_room("storage-l").expect("prefix should resolve");
+        assert_eq!(w.current_room().resources[pfx].name, "storage-logs");
+    }
+
+    #[test]
     fn cannot_take_in_dark() {
         let mut w = tiny_world();
         w.go(Direction::North).unwrap();
@@ -567,6 +688,37 @@ mod tests {
         let msg = w.drop_item("storage");
         assert!(msg.contains("locked"));
         assert!(w.find_in_room("storage").is_some());
+    }
+
+    #[test]
+    fn unlock_reverses_a_lock() {
+        let mut w = tiny_world();
+        w.lock("storage");
+        assert!(w.drop_item("storage").contains("locked"));
+        let msg = w.unlock("storage");
+        assert!(msg.contains("lift"));
+        // Now the resource is deletable again.
+        assert!(w.drop_item("storage").contains("delete"));
+    }
+
+    #[test]
+    fn unlock_on_unlocked_is_noop_message() {
+        let mut w = tiny_world();
+        assert!(w.unlock("storage").contains("not locked"));
+    }
+
+    #[test]
+    fn resize_reduces_cost_and_clears_overrun_hazard() {
+        let mut w = tiny_world();
+        // Give the storage account a cost-overrun hazard.
+        w.current_room_mut().resources[0].monthly_cost = 800;
+        let before = w.total_hazards();
+        let msg = w.resize("storage");
+        assert!(msg.contains("right-size"));
+        assert!(
+            w.total_hazards() < before,
+            "right-sizing should clear the cost hazard"
+        );
     }
 
     #[test]

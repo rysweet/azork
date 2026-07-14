@@ -166,4 +166,43 @@ mod tests {
         let w = MockBackend::new().build_world().unwrap();
         assert!(w.total_hazards() > 0);
     }
+
+    #[test]
+    fn mock_world_is_fully_winnable_to_perfect_score() {
+        let mut w = MockBackend::new().build_world().unwrap();
+
+        // landing-rg: lock the portal.
+        w.lock("portal");
+
+        // web-rg: lock the app service and the open storage account.
+        w.go(Direction::North).unwrap();
+        w.lock("appservice");
+        w.lock("webstore");
+
+        // unmon-rg (dark): light it, then lock the orphaned VM.
+        w.go(Direction::North).unwrap();
+        w.monitor();
+        w.lock("orphan-vm");
+
+        // data-rg: lock the key vault, then lock and right-size the pricey SQL server.
+        w.go(Direction::South).unwrap(); // back to web-rg
+        w.go(Direction::South).unwrap(); // back to landing-rg
+        w.go(Direction::East).unwrap(); // data-rg
+        w.lock("keyvault");
+        w.lock("sqlserver");
+        w.resize("sqlserver"); // 800 -> 400, clears the cost-overrun hazard
+
+        // identity-rg: lock the managed identity.
+        w.go(Direction::West).unwrap(); // back to landing-rg
+        w.go(Direction::Down).unwrap(); // identity-rg
+        w.lock("managed-identity");
+
+        assert_eq!(
+            w.total_hazards(),
+            0,
+            "a hardened estate should have zero hazards"
+        );
+        assert!(w.score().contains("100/100"), "score was: {}", w.score());
+        assert!(w.score().contains("Cloud Guardian"));
+    }
 }

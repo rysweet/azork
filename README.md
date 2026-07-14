@@ -23,7 +23,8 @@ banish the Grues, and raise your governance score.
 | **Grue**                 | Danger: cost overrun, public/unencrypted, unmonitored |
 | `look` / `examine`       | `az resource list` / `az resource show`         |
 | `take` / `drop`          | Acquire / delete a resource (with confirmation) |
-| `lock`                   | Secure: management lock + private + encrypted   |
+| `lock` / `unlock`        | Add / remove a management lock (+ private + encrypted) |
+| `resize`                 | Right-size a resource to cut runaway cost       |
 | `monitor`                | Enable diagnostics / Azure Monitor (banish Grue)|
 | `cast deploy`            | `az deployment group create` (bicep/ARM, mock)  |
 | `score`                  | Governance posture (0–100)                       |
@@ -37,6 +38,8 @@ go <dir> | <dir>        navigate: north south east west up down (n/s/e/w/u/d)
 take <name>             acquire a resource into inventory (with confirmation)
 drop <name>             delete a resource (destructive, with confirmation)
 lock <name>             secure a resource: lock + private + encrypted
+unlock <name>           remove a management lock (so it can change/delete)
+resize <name>           right-size a resource to cut runaway monthly cost
 monitor / light         enable monitoring here (banish the Grue)
 cast deploy [template]  cast a deployment spell (bicep/ARM, mock)
 inventory / i           list resources you are carrying
@@ -141,8 +144,8 @@ az> monitor
 You enable diagnostic settings and Azure Monitor. Light floods the room; the lurking Grue shrieks and flees.
 
 az> score
-Governance posture: 55/100  —  rank: Apprentice Admin
-Outstanding hazards: 9 (public/unencrypted/unlocked resources, cost overruns, unmonitored rooms)
+Governance posture: 50/100  —  rank: Apprentice Admin
+Outstanding hazards: 10 (public/unencrypted/unlocked resources, cost overruns, unmonitored rooms)
 Moves taken: 4
 ```
 
@@ -168,18 +171,27 @@ Idiomatic Rust modules:
 
 ```
 src/
-├── main.rs            REPL, intro banner, backend selection, confirmations, Grue turns
+├── main.rs            binary: REPL, intro banner, backend selection, confirmations, Grue turns
+├── lib.rs             library crate root re-exporting parser, world, backend
 ├── parser.rs          command parser: verbs, directions, aliases (+ unit tests)
 ├── world.rs           world model: rooms, resources, hazards, scoring, Grue mechanic (+ unit tests)
 └── backend/
     ├── mod.rs         Backend trait + selection
     ├── mock.rs        default offline synthetic estate (+ unit tests)
     └── az.rs          optional live backend shelling out to `az`
+
+tests/                 external contract & integration tests (drive the public API)
+├── parser_tests.rs    parser verb/alias/edge-case contract
+├── world_tests.rs     world-model behaviour & edge cases
+├── backend_tests.rs   backend selection + mock estate invariants
+└── integration_tests.rs  end-to-end typed-session workflows
 ```
 
+The engine is split into a thin `azork` binary and an `azork` library crate.
 The `Backend` trait cleanly separates *where the map comes from* (mock vs. live
 Azure) from the game engine, so the world model and parser are fully testable
-without any Azure dependency.
+without any Azure dependency — from both colocated unit tests and the external
+`tests/` suite.
 
 ## Development
 

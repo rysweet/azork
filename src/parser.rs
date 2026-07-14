@@ -59,6 +59,12 @@ pub enum Command {
     Drop(String),
     /// Secure/lock a resource (maps to enabling protections / RBAC lock).
     Lock(String),
+    /// Remove a management lock so the resource can be changed/deleted again
+    /// (maps to `az lock delete`).
+    Unlock(String),
+    /// Right-size a resource to cut its monthly cost (maps to changing a SKU /
+    /// scaling down a tier).
+    Resize(String),
     /// Enable monitoring on the current room, banishing the Grue.
     Monitor,
     /// Show carried resources.
@@ -136,6 +142,20 @@ pub fn parse(input: &str) -> Command {
                 Command::Lock(arg)
             }
         }
+        "unlock" | "unward" | "unsecure" => {
+            if arg.is_empty() {
+                Command::Unknown(input.to_string())
+            } else {
+                Command::Unlock(arg)
+            }
+        }
+        "resize" | "rightsize" | "right-size" | "scale" | "downsize" => {
+            if arg.is_empty() {
+                Command::Unknown(input.to_string())
+            } else {
+                Command::Resize(arg)
+            }
+        }
         "monitor" | "light" => Command::Monitor,
         "inventory" | "i" | "inv" => Command::Inventory,
         "score" => Command::Score,
@@ -202,18 +222,59 @@ mod tests {
 
     #[test]
     fn take_and_drop() {
-        assert_eq!(parse("take keyvault"), Command::Take("keyvault".to_string()));
-        assert_eq!(parse("get the keyvault"), Command::Take("keyvault".to_string()));
-        assert_eq!(parse("drop database"), Command::Drop("database".to_string()));
-        assert_eq!(parse("delete the database"), Command::Drop("database".to_string()));
+        assert_eq!(
+            parse("take keyvault"),
+            Command::Take("keyvault".to_string())
+        );
+        assert_eq!(
+            parse("get the keyvault"),
+            Command::Take("keyvault".to_string())
+        );
+        assert_eq!(
+            parse("drop database"),
+            Command::Drop("database".to_string())
+        );
+        assert_eq!(
+            parse("delete the database"),
+            Command::Drop("database".to_string())
+        );
     }
 
     #[test]
     fn lock_and_monitor() {
         assert_eq!(parse("lock storage"), Command::Lock("storage".to_string()));
-        assert_eq!(parse("secure the storage"), Command::Lock("storage".to_string()));
+        assert_eq!(
+            parse("secure the storage"),
+            Command::Lock("storage".to_string())
+        );
         assert_eq!(parse("monitor"), Command::Monitor);
         assert_eq!(parse("light"), Command::Monitor);
+    }
+
+    #[test]
+    fn unlock_and_resize() {
+        assert_eq!(
+            parse("unlock keyvault"),
+            Command::Unlock("keyvault".to_string())
+        );
+        assert_eq!(
+            parse("unward the keyvault"),
+            Command::Unlock("keyvault".to_string())
+        );
+        assert_eq!(
+            parse("resize sqlserver"),
+            Command::Resize("sqlserver".to_string())
+        );
+        assert_eq!(
+            parse("right-size sqlserver"),
+            Command::Resize("sqlserver".to_string())
+        );
+        assert_eq!(
+            parse("scale the sqlserver"),
+            Command::Resize("sqlserver".to_string())
+        );
+        assert!(matches!(parse("unlock"), Command::Unknown(_)));
+        assert!(matches!(parse("resize"), Command::Unknown(_)));
     }
 
     #[test]

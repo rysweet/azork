@@ -104,12 +104,36 @@ cost.
 ```
 
 The `$800/mo` cost is itself a hazard (any resource ≥ $500/mo). Locking removes
-the *unlocked* hazard; the cost hazard reflects real spend, so treat this room
-as a prompt to right-size in real life. Harden what you can:
+the *unlocked* hazard, but the cost hazard needs a different tool — `resize`,
+which right-sizes the resource to a smaller, cheaper tier:
 
 ```
-az> lock sqlserver
 az> lock keyvault
+az> lock sqlserver
+az> resize sqlserver
+You right-size the sqlserver to a reserved tier: ~$800/mo down to ~$400/mo.
+The cost-overrun Grue loses its scent.
+```
+
+Now the SQL server is locked *and* under the $500/mo threshold — all of its
+hazards are cleared.
+
+### Don't forget the Hall of Identity
+
+One room is easy to miss. From the landing zone, go **down** into `identity-rg`
+and lock the managed identity lurking there:
+
+```
+az> west
+az> down
+== identity-rg (eastus) ==
+The Hall of Identity. Managed identities drift like wisps and RBAC wards bar the
+deeper doors.
+You see:
+  - managed-identity (Microsoft.ManagedIdentity/userAssignedIdentities)
+Exits: up
+
+az> lock managed-identity
 ```
 
 ## 4. Face the Grue in the dark
@@ -164,25 +188,41 @@ encryption. A Grue recoils.
 > ```
 > Restart with `azork` and try again — this time, `monitor` sooner.
 
-## 5. Deleting resources safely
+## 5. Locking, unlocking, and deleting safely
 
 `drop` deletes a resource and `take` moves it into your inventory. Both ask for
 **y/N** confirmation and default to **No**, so a stray keystroke never destroys
 anything.
 
-Note that **`lock` is one-way**: there is no `unlock` command, and a locked
-resource refuses deletion (`The orphan-vm is locked. Unlock it before you can
-delete it.`). Locking is a deliberate, irreversible safeguard. Because you
-locked `orphan-vm` in the previous step, an attempted delete is safely blocked —
-and cancelling at the prompt leaves it untouched regardless:
+A locked resource **refuses deletion** — a deliberate safeguard. Because you
+locked `orphan-vm` in the previous step, an attempted delete is blocked:
 
 ```
 az> drop orphan-vm
-DELETE 'orphan-vm'? This is destructive and cannot be undone. [y/N] n
-You stay your hand. The resource survives.
+DELETE 'orphan-vm'? This is destructive and cannot be undone. [y/N] y
+The orphan-vm is locked. Unlock it before you can delete it.
 ```
 
-`take` moves a resource into your inventory (locked or not):
+If you genuinely need to remove it, lift the lock first with `unlock`, then
+delete:
+
+```
+az> unlock orphan-vm
+You lift the management lock from the orphan-vm. It can now be changed or
+deleted — but it is once more vulnerable.
+```
+
+> Re-locking restores all its protections:
+> ```
+> az> lock orphan-vm
+> You ward the orphan-vm with a management lock, private endpoints, and
+> encryption. A Grue recoils.
+> ```
+> For a clean Cloud-Guardian run, leave everything locked — only unlock what you
+> truly mean to change.
+
+With `orphan-vm` locked again, `take` moves it into your inventory (locked
+resources move with their protections intact):
 
 ```
 az> take orphan-vm
@@ -211,20 +251,24 @@ resources were provisioned.)
 
 ## 7. Claim your rank
 
-Once every resource is locked and every room is monitored, check your posture:
+Once every resource is locked, the pricey SQL server is right-sized, and every
+room is monitored, check your posture:
 
 ```
 az> score
-Governance posture: 95/100  —  rank: Cloud Guardian
-Outstanding hazards: 1 (public/unencrypted/unlocked resources, cost overruns,
+Governance posture: 100/100  —  rank: Cloud Guardian
+Outstanding hazards: 0 (public/unencrypted/unlocked resources, cost overruns,
 unmonitored rooms)
-Moves taken: 18
+Moves taken: 20
 ```
 
-One hazard remains that you cannot lock away: the `sqlserver` costs `$800/mo`,
-and cost overruns (≥ $500/mo) reflect real spend rather than a security flag.
-That caps the mock estate at **95/100** — still **Cloud Guardian** territory.
-In real life this is your cue to right-size the resource.
+A flawless run: all seven resources locked (clearing public, unencrypted, and
+unlocked flags), the one dark room monitored, and the `sqlserver` right-sized
+below the $500/mo threshold. Zero hazards remain — a perfect **100/100 Cloud
+Guardian**.
+
+> Miss the `resize sqlserver` step and you'll top out at **95/100** — still
+> Cloud Guardian, but with one cost-overrun hazard the lock could not clear.
 
 Leave the dungeon in triumph:
 
@@ -232,7 +276,7 @@ Leave the dungeon in triumph:
 az> quit
 
 You step back through the portal.
-Governance posture: 95/100  —  rank: Cloud Guardian
+Governance posture: 100/100  —  rank: Cloud Guardian
 ...
 ```
 

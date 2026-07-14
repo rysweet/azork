@@ -226,7 +226,9 @@ mod tests {
     #[test]
     fn auth_and_permission_errors_are_permanent() {
         assert!(!is_transient("Please run 'az login' to setup account."));
-        assert!(!is_transient("AuthorizationFailed: does not have authorization"));
+        assert!(!is_transient(
+            "AuthorizationFailed: does not have authorization"
+        ));
         assert!(!is_transient("Forbidden"));
         assert!(!is_transient(""));
     }
