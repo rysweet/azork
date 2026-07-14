@@ -1,0 +1,216 @@
+# AzZork Usage Guide
+
+AzZork is a text-adventure REPL that reimagines the Azure control plane as a
+Zork-style dungeon. This guide covers everything you can do at the `az>` prompt.
+
+- New here? Start with the [Tutorial](TUTORIAL.md).
+- Configuring backends and environment? See the [Configuration reference](CONFIGURATION.md).
+- Embedding or extending the engine? See the [API / module reference](API.md).
+
+## Starting the game
+
+```bash
+# Offline mock dungeon (default — no Azure credentials required)
+azork
+
+# Explore your real subscription via the installed `az` CLI
+azork --backend az
+# or
+AZORK_BACKEND=az azork
+```
+
+On launch AzZork prints an ASCII banner, a status line showing the active
+backend and subscription, and a description of your starting room:
+
+```
+[backend: mock (offline) | subscription: Contoso-Dev (mock)]
+
+== landing-rg (eastus) ==
+The West Landing Zone. Cables snake overhead and a subscription portal hums
+softly. This resource group is monitored and safe.
+You see:
+  - portal (Microsoft.Portal/dashboards)
+Exits: down, east, north
+```
+
+## The prompt
+
+Every turn begins with the prompt:
+
+```
+az>
+```
+
+Type a command and press Enter. Input is **case-insensitive** and forgiving:
+filler words (`the`, `a`, `an`, `at`, `to`, `into`, `on`, `my`) are ignored, so
+`examine the storage account` and `x storage account` mean the same thing.
+
+Pressing Ctrl-D (EOF) at any prompt ends the session gracefully.
+
+## Command reference
+
+| Command | Aliases | What it does | Azure analogue |
+| --- | --- | --- | --- |
+| `look` | `l` | Describe the current room: resources present and available exits. | `az resource list` |
+| `examine <name>` | `x`, `inspect`, `show` | Inspect one resource: type, security status, cost, hazards. | `az resource show` |
+| `go <dir>` | `move`, `walk`, or a bare direction | Move between rooms. | Navigate resource groups / regions / subscriptions |
+| `take <name>` | `get`, `grab`, `acquire` | Adopt a resource into your inventory (asks **y/N**). | `az resource create` / adopt |
+| `drop <name>` | `delete`, `release`, `rm` | Delete a resource (destructive, asks **y/N**). | `az resource delete` |
+| `lock <name>` | `secure` | Harden a resource: management lock + private + encrypted. | Enable protections / RBAC lock |
+| `monitor` | `light` | Enable monitoring in the current room, banishing the Grue. | Enable diagnostics / Azure Monitor |
+| `cast deploy [template]` | `deploy [template]` | Cast a deployment spell (mock bicep/ARM). | `az deployment group create` |
+| `inventory` | `i`, `inv` | List the resources you are carrying. | — |
+| `score` | — | Report your governance posture (0–100) and rank. | Governance posture |
+| `help` | `?`, `h` | Show the in-game command list. | — |
+| `quit` | `q`, `exit` | Leave the dungeon (prints your final score). | — |
+
+Unrecognized input returns a friendly hint rather than crashing:
+
+```
+az> frobnicate the vm
+I don't understand "frobnicate the vm". Type 'help' for commands.
+```
+
+### Directions
+
+`go` accepts six directions, each with a single-letter abbreviation. A bare
+direction is shorthand for `go <direction>`:
+
+| Direction | Abbreviation |
+| --- | --- |
+| `north` | `n` |
+| `south` | `s` |
+| `east` | `e` |
+| `west` | `w` |
+| `up` | `u` |
+| `down` | `d` |
+
+```
+az> north      # same as "go north"
+az> go s
+az> u
+```
+
+Trying to move where there is no exit is harmless:
+
+```
+az> go west
+You can't go west from here.
+```
+
+## Working with resources
+
+Resource names are matched **case-insensitively** and by **prefix**, so you can
+type the shortest unambiguous fragment:
+
+```
+az> examine web        # matches "webstore"
+az> lock keyv          # matches "keyvault"
+```
+
+`examine` shows a full status block:
+
+```
+az> examine webstore
+webstore [Microsoft.Storage/storageAccounts]
+A storage account with its container door flung wide open.
+Status: PUBLIC | UNENCRYPTED | unlocked | ~$60/mo
+A Grue senses it is exposed to the public internet, storing its data
+unencrypted, unlocked and vulnerable to deletion.
+```
+
+### Hardening: `lock`
+
+`lock` is the primary way to remove hazards. It applies three protections at
+once — a management lock, a private endpoint, and encryption at rest:
+
+```
+az> lock webstore
+You ward the webstore with a management lock, private endpoints, and
+encryption. A Grue recoils.
+```
+
+A locked resource cannot be deleted until it is unlocked, protecting you from
+accidental destruction.
+
+### Confirmation prompts
+
+`take` and `drop` are the only mutating verbs that touch resources, and both ask
+for confirmation. The default is **No** — pressing Enter (or anything other than
+`y`/`yes`) cancels:
+
+```
+az> drop orphan-vm
+DELETE 'orphan-vm'? This is destructive and cannot be undone. [y/N] n
+You stay your hand. The resource survives.
+```
+
+> In the mock backend, `take` and `drop` only mutate the in-memory world — no
+> real resources are ever affected. Even with `--backend az`, discovery is
+> read-only; deletions are simulated in memory.
+
+## The Grue mechanic
+
+A room is **dark** when monitoring is disabled. In the dark you cannot `look`
+at detail, cannot `examine`, and cannot `take` — and a **Grue** stalks you.
+
+Each turn spent in a dark room escalates the danger:
+
+1. **First turn** — always a warning:
+   `>> It is dark. You hear the slavering fangs of a Grue nearby. Enable monitoring (type 'monitor') before it strikes!`
+2. **Second turn** — ~25% chance of death.
+3. **Third turn** — ~50% chance.
+4. **Fourth turn and beyond** — ~75% chance.
+
+Escape by leaving the room (`go <dir>` back toward the light) or by casting
+light with `monitor`:
+
+```
+az> monitor
+You enable diagnostic settings and Azure Monitor. Light floods the room; the
+lurking Grue shrieks and flees.
+```
+
+If a Grue catches you, the game ends and your final score is printed:
+
+```
+>> Oh no! You have walked too long in the dark. A GRUE lunges from the shadows
+and DEVOURS you.
+
+*** You have died. ***
+```
+
+## Scoring
+
+`score` reports your governance posture from 0 to 100. You start below 100
+because the world seeds hazards for you to fix. Each outstanding hazard costs 5
+points:
+
+```
+az> score
+Governance posture: 65/100  —  rank: Apprentice Admin
+Outstanding hazards: 7 (public/unencrypted/unlocked resources, cost overruns,
+unmonitored rooms)
+Moves taken: 12
+```
+
+Hazards counted:
+
+- A resource that is **public**.
+- A resource that is **unencrypted**.
+- A resource that is **unlocked**.
+- A resource whose estimated cost is **≥ $500/mo**.
+- Each **dark (unmonitored)** room.
+
+Ranks by score:
+
+| Score | Rank |
+| --- | --- |
+| 90–100 | Cloud Guardian |
+| 70–89 | Diligent Steward |
+| 50–69 | Apprentice Admin |
+| 30–49 | Reckless Tinkerer |
+| 0–29 | Grue Chow |
+
+Your goal: `lock` every hazardous resource, `monitor` every dark room, and reach
+**Cloud Guardian**.

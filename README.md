@@ -189,6 +189,15 @@ cargo test       # run the unit test suite (parser + world model + backends)
 cargo run        # play with the offline mock backend
 ```
 
+## Documentation
+
+Full documentation lives in [`docs/`](docs/):
+
+- [Usage guide](docs/USAGE.md) — every command, the Grue mechanic, and scoring.
+- [Tutorial](docs/TUTORIAL.md) — a guided playthrough from first `look` to Cloud Guardian.
+- [Configuration reference](docs/CONFIGURATION.md) — backend selection, the mock world, and the read-only `az` backend.
+- [API / module reference](docs/API.md) — internal architecture for contributors.
+
 ## License
 
 [MIT](LICENSE) © 2026 rysweet

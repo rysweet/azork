@@ -1,0 +1,232 @@
+# AzZork Tutorial: Harden the Estate
+
+This walkthrough takes you from your first `look` to the coveted **Cloud
+Guardian** rank, all in the offline mock dungeon — no Azure account required.
+
+If you just want a command reference, see the [Usage guide](USAGE.md). For how
+backends work, see the [Configuration reference](CONFIGURATION.md).
+
+## 1. Enter the dungeon
+
+```bash
+azork
+```
+
+You are greeted by the banner and dropped into `landing-rg`:
+
+```
+[backend: mock (offline) | subscription: Contoso-Dev (mock)]
+
+== landing-rg (eastus) ==
+The West Landing Zone. Cables snake overhead and a subscription portal hums
+softly. This resource group is monitored and safe.
+You see:
+  - portal (Microsoft.Portal/dashboards)
+Exits: down, east, north
+```
+
+Check your starting posture:
+
+```
+az> score
+Governance posture: 65/100  —  rank: Apprentice Admin
+Outstanding hazards: 7 (public/unencrypted/unlocked resources, cost overruns,
+unmonitored rooms)
+Moves taken: 0
+```
+
+Seven hazards stand between you and a perfect score. Let's hunt them down.
+
+## 2. Secure the public web tier
+
+Head north into the exposed web tier:
+
+```
+az> north
+== web-rg (eastus) ==
+The Public Web Tier. Wind howls through open ports. Something here is exposed to
+the whole internet.
+You see:
+  - appservice (Microsoft.Web/sites)
+  - webstore (Microsoft.Storage/storageAccounts)
+Exits: north, south
+```
+
+Examine the storage account to see why the Grues are circling:
+
+```
+az> examine webstore
+webstore [Microsoft.Storage/storageAccounts]
+A storage account with its container door flung wide open.
+Status: PUBLIC | UNENCRYPTED | unlocked | ~$60/mo
+A Grue senses it is exposed to the public internet, storing its data
+unencrypted, unlocked and vulnerable to deletion.
+```
+
+Three hazards on one resource. Ward it:
+
+```
+az> lock webstore
+You ward the webstore with a management lock, private endpoints, and
+encryption. A Grue recoils.
+
+az> lock appservice
+You ward the appservice with a management lock, private endpoints, and
+encryption. A Grue recoils.
+```
+
+`lock` clears the public, unencrypted, and unlocked flags in one move. Two
+resources hardened, four hazards gone.
+
+## 3. Tame the cost-overrun creature
+
+Return to the landing zone and go east to the data vaults:
+
+```
+az> south
+az> east
+== data-rg (westus2) ==
+The Data Vaults. Cold air, rows of disks, and the low growl of an overpriced
+database.
+You see:
+  - sqlserver (Microsoft.Sql/servers)
+  - keyvault (Microsoft.KeyVault/vaults)
+Exits: west
+
+az> examine sqlserver
+sqlserver [Microsoft.Sql/servers]
+A hulking SQL server, scales slick with transaction logs.
+Status: private | encrypted | unlocked | ~$800/mo
+A Grue senses it is unlocked and vulnerable to deletion, bleeding $800/mo in
+cost.
+```
+
+The `$800/mo` cost is itself a hazard (any resource ≥ $500/mo). Locking removes
+the *unlocked* hazard; the cost hazard reflects real spend, so treat this room
+as a prompt to right-size in real life. Harden what you can:
+
+```
+az> lock sqlserver
+az> lock keyvault
+```
+
+## 4. Face the Grue in the dark
+
+The most dangerous hazard is a **dark room**. From `web-rg`, go north into the
+unmonitored group:
+
+```
+az> west
+az> north
+az> north
+== unmon-rg (centralus) ==
+It is pitch black here — no monitoring, no diagnostics. You are likely to be
+eaten by a Grue.
+Exits: south
+
+>> It is dark. You hear the slavering fangs of a Grue nearby. Enable monitoring
+(type 'monitor') before it strikes!
+```
+
+The first dark turn is only a warning — but linger and the odds turn deadly
+(~25% on turn 2, ~50% on turn 3, ~75% thereafter). **Do not dawdle.** Turn on
+the lights immediately:
+
+```
+az> monitor
+You enable diagnostic settings and Azure Monitor. Light floods the room; the
+lurking Grue shrieks and flees.
+```
+
+The room is now lit. You can see its contents and harden them:
+
+```
+az> look
+== unmon-rg (centralus) ==
+...
+You see:
+  - orphan-vm (Microsoft.Compute/virtualMachines)
+Exits: south
+
+az> lock orphan-vm
+You ward the orphan-vm with a management lock, private endpoints, and
+encryption. A Grue recoils.
+```
+
+> **If a Grue catches you** the game ends:
+> ```
+> >> Oh no! You have walked too long in the dark. A GRUE lunges from the shadows
+> and DEVOURS you.
+>
+> *** You have died. ***
+> ```
+> Restart with `azork` and try again — this time, `monitor` sooner.
+
+## 5. Deleting resources safely
+
+Suppose you decide the orphaned VM should go entirely. First unlock is required
+because `lock` protects against deletion — but you can `drop` an *unlocked*
+resource with confirmation. To demonstrate a cancelled delete:
+
+```
+az> drop orphan-vm
+DELETE 'orphan-vm'? This is destructive and cannot be undone. [y/N] n
+You stay your hand. The resource survives.
+```
+
+`take` behaves the same way, moving a resource into your inventory:
+
+```
+az> take orphan-vm
+Acquire 'orphan-vm' into your inventory? [y/N] y
+You acquire the orphan-vm and add it to your inventory.
+
+az> inventory
+You are carrying:
+  - orphan-vm (Microsoft.Compute/virtualMachines)
+```
+
+Nothing here touches real Azure — the mock world is entirely in memory.
+
+## 6. Cast a deployment spell
+
+`cast deploy` simulates a bicep/ARM deployment into the current room:
+
+```
+az> cast deploy webapp.bicep
+You invoke the deployment spell with 'webapp.bicep'...
+The bicep incantation compiles and deploys into web-rg. (mock: no real
+resources were provisioned.)
+```
+
+`deploy webapp.bicep` (without `cast`) is an accepted shorthand.
+
+## 7. Claim your rank
+
+Once every resource is locked and every room is monitored, check your posture:
+
+```
+az> score
+Governance posture: 100/100  —  rank: Cloud Guardian
+Outstanding hazards: 0 (public/unencrypted/unlocked resources, cost overruns,
+unmonitored rooms)
+Moves taken: 18
+```
+
+Leave the dungeon in triumph:
+
+```
+az> quit
+
+You step back through the portal.
+Governance posture: 100/100  —  rank: Cloud Guardian
+...
+```
+
+## Where to next?
+
+- Point AzZork at your **real** subscription (read-only) with
+  `azork --backend az` — see the
+  [Configuration reference](CONFIGURATION.md#the-az-backend-live-azure).
+- Explore the engine internals in the [API / module reference](API.md).
+- Full command details live in the [Usage guide](USAGE.md).

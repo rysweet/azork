@@ -1,0 +1,132 @@
+# AzZork Configuration Reference
+
+AzZork is intentionally configuration-light. There are no config files, no save
+files, and nothing is persisted to disk — all state lives in memory and is
+discarded when you quit. Behaviour is controlled entirely by a single choice:
+**which backend** builds the world.
+
+## Backend selection
+
+The backend decides where the dungeon map comes from. It is chosen (in
+precedence order) by:
+
+1. A `--backend <id>` / `-b <id>` command-line flag.
+2. The `--backend=<id>` form.
+3. The `AZORK_BACKEND` environment variable.
+4. Default: `mock`.
+
+```bash
+azork                       # mock (default)
+azork --backend az          # live Azure
+azork -b az                 # same, short flag
+azork --backend=mock        # explicit mock
+AZORK_BACKEND=az azork       # via environment
+```
+
+### Recognized backend ids
+
+| Id(s) | Backend | Requires credentials? | Network? |
+| --- | --- | --- | --- |
+| `mock` (and any unknown id) | Offline synthetic estate | No | No |
+| `az`, `real`, `azure` | Live Azure via the `az` CLI | Yes (`az login`) | Yes |
+
+Unknown ids fall back to `mock` rather than erroring, so a typo never leaves you
+credential-gated.
+
+## The `mock` backend (default)
+
+The mock backend hand-authors a small, deliberately hazardous Azure estate so
+the game is fully playable offline with **zero credentials and zero network
+calls**. It always includes at least one dark (unmonitored) room so the Grue
+mechanic is reachable.
+
+The starting layout:
+
+```
+                unmon-rg  (DARK — Grue lurks)
+                   |  north/south
+web-rg  ── north ──┘
+   | south
+landing-rg (start) ── east ── data-rg
+   | down
+identity-rg
+```
+
+| Room | Region | Monitored | Notable resources |
+| --- | --- | --- | --- |
+| `landing-rg` (start) | eastus | yes | `portal` |
+| `web-rg` | eastus | yes | `appservice` (public), `webstore` (public, unencrypted) |
+| `data-rg` | westus2 | yes | `sqlserver` ($800/mo), `keyvault` (unlocked) |
+| `identity-rg` | eastus | yes | `managed-identity` |
+| `unmon-rg` | centralus | **no** | `orphan-vm` (public, unencrypted, $300/mo) |
+
+This world is used by the entire test suite; no test path ever invokes the `az`
+backend.
+
+## The `az` backend (live Azure)
+
+The `az` backend maps your **real** subscription into the dungeon by shelling
+out to the installed Azure CLI. It is never used by default and never exercised
+by the tests.
+
+### Prerequisites
+
+- The [`az` CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) must
+  be installed and on your `PATH`.
+- You must be authenticated: `az login`.
+- An active subscription with at least one resource group.
+
+### What it reads (read-only)
+
+The backend performs only non-mutating discovery calls, requesting
+tab-separated output (`-o tsv`) with narrow `--query` projections so no JSON
+dependency is needed:
+
+| Purpose | Command |
+| --- | --- |
+| Subscription name | `az account show --query name -o tsv` |
+| Rooms (resource groups) | `az group list --query "[].{name:name,location:location}" -o tsv` |
+| Objects (resources) | `az resource list -g <group> --query "[].{name:name,type:type}" -o tsv` |
+
+Resource groups become rooms, chained north↔south into a navigable corridor.
+Each group's resources become objects in that room. Live rooms are assumed
+monitored (the game cannot cheaply prove otherwise), so the Grue mechanic is
+primarily a mock-world feature.
+
+### Safety guarantees
+
+- **Read-only:** only `show`/`list` discovery verbs are ever invoked. No
+  create, update, or delete calls are made against Azure.
+- **No injection surface:** `az` is invoked via an argument array
+  (`Command::args`), never through a shell; player input never flows into `az`
+  arguments.
+- **No secrets surfaced:** only non-secret metadata (names, types, locations)
+  is read — never Key Vault contents, connection strings, or keys.
+- **In-memory only:** `take`, `drop`, and `lock` mutate the in-memory world
+  exclusively. Nothing is written back to Azure.
+- **Graceful failure:** if `az` is missing, you are not logged in, or no
+  resource groups are found, AzZork prints a helpful message and exits with a
+  tip to use the default mock backend:
+
+  ```
+  Failed to build world via az (live Azure) backend: no resource groups found
+  (or not logged in). Try 'az login', or run with the default mock backend.
+  Tip: run without arguments to use the offline mock backend.
+  ```
+
+## Environment variables
+
+| Variable | Values | Default | Effect |
+| --- | --- | --- | --- |
+| `AZORK_BACKEND` | `mock`, `az`, `real`, `azure` | `mock` | Selects the backend when no `--backend` flag is given. |
+
+## Persistence
+
+None. AzZork has:
+
+- no configuration file,
+- no save/restore,
+- no serialization to disk.
+
+Every session starts fresh from the selected backend, and all changes are lost
+on exit. This keeps the destructive verbs safe and the tool dependency-free.
