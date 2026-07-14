@@ -14,6 +14,15 @@
 use crate::parser::Direction;
 use std::collections::HashMap;
 
+/// Case-insensitive resource-name match: exact or prefix.
+///
+/// `query` is expected to already be lowercased so the per-candidate name is
+/// only lowercased once per comparison.
+fn name_matches(name: &str, query: &str) -> bool {
+    let lname = name.to_lowercase();
+    lname == query || lname.starts_with(query)
+}
+
 /// A single Azure resource, rendered as a dungeon object or creature.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resource {
@@ -253,14 +262,14 @@ impl World {
         self.current_room()
             .resources
             .iter()
-            .position(|r| r.name.to_lowercase() == t || r.name.to_lowercase().starts_with(&t))
+            .position(|r| name_matches(&r.name, &t))
     }
 
     fn find_in_inventory(&self, target: &str) -> Option<usize> {
         let t = target.to_lowercase();
         self.inventory
             .iter()
-            .position(|r| r.name.to_lowercase() == t || r.name.to_lowercase().starts_with(&t))
+            .position(|r| name_matches(&r.name, &t))
     }
 
     /// Examine an object in the room or inventory (equivalent to `az ... show`).
