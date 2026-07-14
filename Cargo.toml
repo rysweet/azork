@@ -1,0 +1,14 @@
+[package]
+name = "azork"
+version = "0.1.0"
+edition = "2021"
+description = "AzZork: the Azure control plane reimagined as a Zork-style text adventure."
+license = "MIT"
+repository = "https://github.com/rysweet/azork"
+readme = "README.md"
+
+[[bin]]
+name = "azork"
+path = "src/main.rs"
+
+[dependencies]

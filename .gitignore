@@ -1,0 +1,6 @@
+/target
+**/*.rs.bk
+Cargo.lock
+
+# amplihack / session runtime state (not project code)
+.claude/runtime/
