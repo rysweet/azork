@@ -226,7 +226,11 @@ Entry point and orchestration. Responsibilities:
 
 ## Testing
 
-37 unit tests are colocated with their modules under `#[cfg(test)]`:
+The suite has **108 tests**: unit tests colocated with each module under
+`#[cfg(test)]`, plus external contract/integration tests in `tests/` that drive
+the public API of the `azork` library crate.
+
+Colocated unit tests:
 
 - **`parser.rs`** — verb/alias parsing (including `unlock`/`resize`), bare
   directions, filler stripping, multi-word targets, unknown input.
@@ -238,9 +242,22 @@ Entry point and orchestration. Responsibilities:
 - **`main.rs`** — `cast deploy` is mock-safe, unknown spells are rejected, and
   the confirmation helper reads yes / defaults to no on EOF.
 
-No test invokes the `az` backend, so the suite runs with zero credentials.
+External test files (in `tests/`, exercising the public contract):
+
+- **`parser_tests.rs`** — every verb + alias, direction round-trips, filler
+  stripping, and the total-function guarantee (no panic on hostile input).
+- **`world_tests.rs`** — prefix matching, inventory-targeted lock/unlock/resize,
+  missing-target handling, score-rank boundaries, zero-cost resize, and
+  darkness-streak recovery when returning to the light.
+- **`backend_tests.rs`** — backend selection, mock estate invariants, a full
+  winnable playthrough, and credential-free `az` backend construction.
+- **`integration_tests.rs`** — end-to-end sessions parsing raw input and
+  dispatching commands against a live world.
+
+No test invokes the `az` backend's `build_world`, so the suite runs with zero
+credentials.
 
 ```bash
 cargo build      # compiles cleanly, no warnings
-cargo test       # 37 tests, all passing
+cargo test       # 108 tests, all passing
 ```

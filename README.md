@@ -171,18 +171,27 @@ Idiomatic Rust modules:
 
 ```
 src/
-├── main.rs            REPL, intro banner, backend selection, confirmations, Grue turns
+├── main.rs            binary: REPL, intro banner, backend selection, confirmations, Grue turns
+├── lib.rs             library crate root re-exporting parser, world, backend
 ├── parser.rs          command parser: verbs, directions, aliases (+ unit tests)
 ├── world.rs           world model: rooms, resources, hazards, scoring, Grue mechanic (+ unit tests)
 └── backend/
     ├── mod.rs         Backend trait + selection
     ├── mock.rs        default offline synthetic estate (+ unit tests)
     └── az.rs          optional live backend shelling out to `az`
+
+tests/                 external contract & integration tests (drive the public API)
+├── parser_tests.rs    parser verb/alias/edge-case contract
+├── world_tests.rs     world-model behaviour & edge cases
+├── backend_tests.rs   backend selection + mock estate invariants
+└── integration_tests.rs  end-to-end typed-session workflows
 ```
 
+The engine is split into a thin `azork` binary and an `azork` library crate.
 The `Backend` trait cleanly separates *where the map comes from* (mock vs. live
 Azure) from the game engine, so the world model and parser are fully testable
-without any Azure dependency.
+without any Azure dependency — from both colocated unit tests and the external
+`tests/` suite.
 
 ## Development
 

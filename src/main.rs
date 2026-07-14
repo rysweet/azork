@@ -4,13 +4,10 @@
 //! required). Pass `--backend az` (or set `AZORK_BACKEND=az`) to explore your
 //! real subscription via the `az` CLI.
 
-mod backend;
-mod parser;
-mod world;
-
-use parser::Command;
+use azork::backend;
+use azork::parser::{self, Command};
+use azork::world::{GrueOutcome, World};
 use std::io::{self, BufRead, Write};
-use world::{GrueOutcome, World};
 
 const BANNER: &str = r#"
     ___    ______           __
@@ -248,7 +245,7 @@ fn run_grue_check(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::{mock::MockBackend, Backend};
+    use azork::backend::{mock::MockBackend, Backend};
 
     #[test]
     fn cast_deploy_is_mock_safe() {
