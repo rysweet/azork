@@ -1,0 +1,47 @@
+{
+  "hooks": {
+    "agentStop": [
+      {
+        "bash": "/home/rysweet/src/azork/.github/hooks/stop",
+        "timeoutSec": 30,
+        "type": "command"
+      }
+    ],
+    "postToolUse": [
+      {
+        "bash": "/home/rysweet/src/azork/.github/hooks/post-tool-use",
+        "timeoutSec": 30,
+        "type": "command"
+      }
+    ],
+    "preCompact": [
+      {
+        "bash": "/home/rysweet/src/azork/.github/hooks/pre-compact",
+        "timeoutSec": 30,
+        "type": "command"
+      }
+    ],
+    "preToolUse": [
+      {
+        "bash": "/home/rysweet/src/azork/.github/hooks/pre-tool-use",
+        "timeoutSec": 30,
+        "type": "command"
+      }
+    ],
+    "sessionStart": [
+      {
+        "bash": "/home/rysweet/src/azork/.github/hooks/session-start",
+        "timeoutSec": 30,
+        "type": "command"
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "bash": "/home/rysweet/src/azork/.github/hooks/user-prompt-submit",
+        "timeoutSec": 30,
+        "type": "command"
+      }
+    ]
+  },
+  "version": 1
+}
