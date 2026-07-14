@@ -58,6 +58,8 @@ The full set of parsed commands. Derives `Debug, Clone, PartialEq, Eq`.
 | `Take(String)` | Acquire a resource (confirmed by REPL). |
 | `Drop(String)` | Delete a resource (confirmed by REPL). |
 | `Lock(String)` | Harden a resource. |
+| `Unlock(String)` | Remove a management lock from a resource. |
+| `Resize(String)` | Right-size a resource to cut its monthly cost. |
 | `Monitor` | Enable monitoring in the current room. |
 | `Inventory` | List carried resources. |
 | `Score` | Report governance posture. |
@@ -93,6 +95,8 @@ Recognized verb aliases:
 | `Take` | `take`, `get`, `grab`, `acquire` |
 | `Drop` | `drop`, `delete`, `release`, `rm` |
 | `Lock` | `lock`, `secure` |
+| `Unlock` | `unlock`, `unward`, `unsecure` |
+| `Resize` | `resize`, `right-size`, `rightsize`, `scale`, `downsize` |
 | `Monitor` | `monitor`, `light` |
 | `Inventory` | `inventory`, `i`, `inv` |
 | `Score` | `score` |
@@ -149,6 +153,8 @@ The top-level game state. Public fields: `subscription: String`,
 | `take` | `fn take(&mut self, target) -> String` | Move a resource from the room into inventory. Fails in the dark. |
 | `drop_item` | `fn drop_item(&mut self, target) -> String` | Delete a resource from inventory or room. Refuses locked resources. Caller handles confirmation. |
 | `lock` | `fn lock(&mut self, target) -> String` | Harden a resource: sets `locked`, clears `public`, sets `encrypted`. |
+| `unlock` | `fn unlock(&mut self, target) -> String` | Remove a management lock (clears `locked`) so the resource can change or be deleted. |
+| `resize` | `fn resize(&mut self, target) -> String` | Right-size a resource, roughly halving `monthly_cost`; clears the cost-overrun hazard once it drops below `500`. |
 | `monitor` | `fn monitor(&mut self) -> String` | Enable monitoring in the current room; resets the darkness streak. |
 | `inventory` | `fn inventory(&self) -> String` | List carried resources. |
 | `total_hazards` | `fn total_hazards(&self) -> u32` | Sum of resource hazards across all rooms and inventory, plus one per dark room. |
@@ -220,14 +226,15 @@ Entry point and orchestration. Responsibilities:
 
 ## Testing
 
-32 unit tests are colocated with their modules under `#[cfg(test)]`:
+37 unit tests are colocated with their modules under `#[cfg(test)]`:
 
-- **`parser.rs`** — verb/alias parsing, bare directions, filler stripping,
-  multi-word targets, unknown input.
+- **`parser.rs`** — verb/alias parsing (including `unlock`/`resize`), bare
+  directions, filler stripping, multi-word targets, unknown input.
 - **`world.rs`** — `look`, `go`, `take`/`drop`, `lock` hazard reduction,
-  scoring, and the Grue escalation model (with a seeded RNG).
+  `unlock` reversal, `resize` cost reduction, scoring, and the Grue escalation
+  model (with a seeded RNG).
 - **`backend/mock.rs`** — the world builds, starts lit, exposes a reachable dark
-  room, and seeds fixable hazards.
+  room, seeds fixable hazards, and is fully winnable to a perfect **100/100**.
 - **`main.rs`** — `cast deploy` is mock-safe, unknown spells are rejected, and
   the confirmation helper reads yes / defaults to no on EOF.
 
@@ -235,5 +242,5 @@ No test invokes the `az` backend, so the suite runs with zero credentials.
 
 ```bash
 cargo build      # compiles cleanly, no warnings
-cargo test       # 32 tests, all passing
+cargo test       # 37 tests, all passing
 ```

@@ -288,7 +288,11 @@ impl World {
             r.kind,
             r.description,
             if r.public { "PUBLIC" } else { "private" },
-            if r.encrypted { "encrypted" } else { "UNENCRYPTED" },
+            if r.encrypted {
+                "encrypted"
+            } else {
+                "UNENCRYPTED"
+            },
             if r.locked { "locked" } else { "unlocked" },
             r.monthly_cost,
             r.hazard_report(),
@@ -383,6 +387,77 @@ impl World {
             return format!("You secure the carried {}.", name);
         }
         format!("There is no '{}' here to lock.", target)
+    }
+
+    /// Remove a management lock from a resource (in room or inventory) so it can
+    /// be changed or deleted again. Mirrors `az lock delete`.
+    pub fn unlock(&mut self, target: &str) -> String {
+        if let Some(i) = self.find_in_room(target) {
+            let r = &mut self.current_room_mut().resources[i];
+            let name = r.name.clone();
+            if !r.locked {
+                return format!("The {} is not locked.", name);
+            }
+            r.locked = false;
+            self.moves += 1;
+            return format!(
+                "You lift the management lock from the {}. It can now be changed or deleted \
+                 — but it is once more vulnerable.",
+                name
+            );
+        }
+        if let Some(i) = self.find_in_inventory(target) {
+            let r = &mut self.inventory[i];
+            let name = r.name.clone();
+            if !r.locked {
+                return format!("The carried {} is not locked.", name);
+            }
+            r.locked = false;
+            self.moves += 1;
+            return format!("You remove the lock from the carried {}.", name);
+        }
+        format!("There is no '{}' here to unlock.", target)
+    }
+
+    /// Right-size a resource to cut runaway monthly cost (mirrors changing a SKU
+    /// or scaling down a tier). Roughly halves the cost, clearing the
+    /// cost-overrun hazard once it drops below the $500/mo threshold.
+    pub fn resize(&mut self, target: &str) -> String {
+        let apply = |r: &mut Resource| -> String {
+            let name = r.name.clone();
+            if r.monthly_cost == 0 {
+                return format!(
+                    "The {} costs nothing to run; there is nothing to right-size.",
+                    name
+                );
+            }
+            let before = r.monthly_cost;
+            let after = before / 2;
+            r.monthly_cost = after;
+            if before >= 500 && after < 500 {
+                format!(
+                    "You right-size the {} to a reserved tier: ~${}/mo down to ~${}/mo. \
+                     The cost-overrun Grue loses its scent.",
+                    name, before, after
+                )
+            } else {
+                format!(
+                    "You right-size the {}: ~${}/mo down to ~${}/mo.",
+                    name, before, after
+                )
+            }
+        };
+        if let Some(i) = self.find_in_room(target) {
+            let msg = apply(&mut self.current_room_mut().resources[i]);
+            self.moves += 1;
+            return msg;
+        }
+        if let Some(i) = self.find_in_inventory(target) {
+            let msg = apply(&mut self.inventory[i]);
+            self.moves += 1;
+            return msg;
+        }
+        format!("There is no '{}' here to right-size.", target)
     }
 
     /// Enable monitoring on the current room — lights it and banishes the Grue.
@@ -482,19 +557,25 @@ mod tests {
     use super::*;
 
     fn tiny_world() -> World {
-        let lit = Room::new("prod-rg", "A humming, well-lit datacenter aisle.", "eastus", true)
-            .with_exit(Direction::North, "dark-rg")
-            .with_resource({
-                let mut r = Resource::new(
-                    "storage",
-                    "Microsoft.Storage/storageAccounts",
-                    "A squat storage account.",
-                );
-                r.public = true;
-                r.encrypted = false;
-                r
-            });
-        let dark = Room::new("dark-rg", "?", "westus", false).with_exit(Direction::South, "prod-rg");
+        let lit = Room::new(
+            "prod-rg",
+            "A humming, well-lit datacenter aisle.",
+            "eastus",
+            true,
+        )
+        .with_exit(Direction::North, "dark-rg")
+        .with_resource({
+            let mut r = Resource::new(
+                "storage",
+                "Microsoft.Storage/storageAccounts",
+                "A squat storage account.",
+            );
+            r.public = true;
+            r.encrypted = false;
+            r
+        });
+        let dark =
+            Room::new("dark-rg", "?", "westus", false).with_exit(Direction::South, "prod-rg");
         World::new(vec![lit, dark], "prod-rg", "sub-mock-001")
     }
 
@@ -567,6 +648,37 @@ mod tests {
         let msg = w.drop_item("storage");
         assert!(msg.contains("locked"));
         assert!(w.find_in_room("storage").is_some());
+    }
+
+    #[test]
+    fn unlock_reverses_a_lock() {
+        let mut w = tiny_world();
+        w.lock("storage");
+        assert!(w.drop_item("storage").contains("locked"));
+        let msg = w.unlock("storage");
+        assert!(msg.contains("lift"));
+        // Now the resource is deletable again.
+        assert!(w.drop_item("storage").contains("delete"));
+    }
+
+    #[test]
+    fn unlock_on_unlocked_is_noop_message() {
+        let mut w = tiny_world();
+        assert!(w.unlock("storage").contains("not locked"));
+    }
+
+    #[test]
+    fn resize_reduces_cost_and_clears_overrun_hazard() {
+        let mut w = tiny_world();
+        // Give the storage account a cost-overrun hazard.
+        w.current_room_mut().resources[0].monthly_cost = 800;
+        let before = w.total_hazards();
+        let msg = w.resize("storage");
+        assert!(msg.contains("right-size"));
+        assert!(
+            w.total_hazards() < before,
+            "right-sizing should clear the cost hazard"
+        );
     }
 
     #[test]

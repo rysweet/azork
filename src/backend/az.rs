@@ -28,11 +28,7 @@ impl AzBackend {
             .map_err(|e| format!("failed to launch 'az' (is it installed & on PATH?): {}", e))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!(
-                "'az {}' failed: {}",
-                args.join(" "),
-                stderr.trim()
-            ));
+            return Err(format!("'az {}' failed: {}", args.join(" "), stderr.trim()));
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }

@@ -102,8 +102,8 @@ primarily a mock-world feature.
   arguments.
 - **No secrets surfaced:** only non-secret metadata (names, types, locations)
   is read — never Key Vault contents, connection strings, or keys.
-- **In-memory only:** `take`, `drop`, and `lock` mutate the in-memory world
-  exclusively. Nothing is written back to Azure.
+- **In-memory only:** `take`, `drop`, `lock`, `unlock`, and `resize` mutate the
+  in-memory world exclusively. Nothing is written back to Azure.
 - **Graceful failure:** if `az` is missing, you are not logged in, or no
   resource groups are found, AzZork prints a helpful message and exits with a
   tip to use the default mock backend:

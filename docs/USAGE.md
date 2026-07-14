@@ -57,6 +57,8 @@ Pressing Ctrl-D (EOF) at any prompt ends the session gracefully.
 | `take <name>` | `get`, `grab`, `acquire` | Adopt a resource into your inventory (asks **y/N**). | `az resource create` / adopt |
 | `drop <name>` | `delete`, `release`, `rm` | Delete a resource (destructive, asks **y/N**). | `az resource delete` |
 | `lock <name>` | `secure` | Harden a resource: management lock + private + encrypted. | Enable protections / RBAC lock |
+| `unlock <name>` | `unward`, `unsecure` | Remove a management lock so the resource can change or be deleted again. | `az lock delete` |
+| `resize <name>` | `right-size`, `rightsize`, `scale`, `downsize` | Right-size a resource, roughly halving its monthly cost. | Change SKU / scale down a tier |
 | `monitor` | `light` | Enable monitoring in the current room, banishing the Grue. | Enable diagnostics / Azure Monitor |
 | `cast deploy [template]` | `deploy [template]` | Cast a deployment spell (mock bicep/ARM). | `az deployment group create` |
 | `inventory` | `i`, `inv` | List the resources you are carrying. | — |
@@ -131,8 +133,25 @@ encryption. A Grue recoils.
 ```
 
 A locked resource cannot be deleted, protecting you from accidental destruction.
-Locking is deliberately **one-way** — there is no `unlock` command — so lock only
-what you intend to keep.
+If you later need to change or remove it, lift the lock first with `unlock`:
+
+```
+az> unlock webstore
+You lift the management lock from the webstore. It can now be changed or
+deleted — but it is once more vulnerable.
+```
+
+### Cutting cost: `resize`
+
+A resource whose estimated spend reaches **$500/mo** counts as a cost-overrun
+hazard, and `lock` cannot clear it. Use `resize` (aliases `right-size`, `scale`)
+to move it to a smaller tier — this roughly halves the monthly cost:
+
+```
+az> resize sqlserver
+You right-size the sqlserver to a reserved tier: ~$800/mo down to ~$400/mo.
+The cost-overrun Grue loses its scent.
+```
 
 ### Confirmation prompts
 
@@ -183,16 +202,16 @@ and DEVOURS you.
 
 ## Scoring
 
-`score` reports your governance posture from 0 to 100. You start below 100
+`score` reports your governance posture from 0 to 100. You start well below 100
 because the world seeds hazards for you to fix. Each outstanding hazard costs 5
-points:
+points. The default mock estate opens with **14 hazards**:
 
 ```
 az> score
-Governance posture: 65/100  —  rank: Apprentice Admin
-Outstanding hazards: 7 (public/unencrypted/unlocked resources, cost overruns,
+Governance posture: 30/100  —  rank: Reckless Tinkerer
+Outstanding hazards: 14 (public/unencrypted/unlocked resources, cost overruns,
 unmonitored rooms)
-Moves taken: 12
+Moves taken: 0
 ```
 
 Hazards counted:
@@ -213,10 +232,11 @@ Ranks by score:
 | 30–49 | Reckless Tinkerer |
 | 0–29 | Grue Chow |
 
-Your goal: `lock` every hazardous resource, `monitor` every dark room, and reach
-**Cloud Guardian**.
+Your goal: `lock` every hazardous resource, `monitor` every dark room, and
+`resize` any resource bleeding **≥ $500/mo**. Clear all 14 hazards to reach a
+perfect **100/100 — Cloud Guardian**.
 
-> Note: a **cost overrun** (≥ $500/mo) reflects real spend and cannot be `lock`ed
-> away — only right-sizing the resource clears it. In the default mock estate the
-> `sqlserver` ($800/mo) leaves one immovable hazard, capping a perfect run at
-> **95/100** (still Cloud Guardian).
+> A **cost overrun** (≥ $500/mo) cannot be `lock`ed away — it reflects real
+> spend, so only `resize` clears it. In the default mock estate the `sqlserver`
+> ($800/mo) is the one resource that needs right-sizing as well as locking; do
+> both and a perfect 100/100 run is achievable.

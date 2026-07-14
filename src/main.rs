@@ -39,6 +39,8 @@ const HELP: &str = r#"Commands (Zork verbs -> Azure operations):
   take <name>             acquire a resource into inventory (with confirmation)
   drop <name>             delete a resource (destructive, with confirmation)
   lock <name>             secure a resource: lock + private + encrypted
+  unlock <name>           remove a management lock (so it can change/delete)
+  resize <name>           right-size a resource to cut runaway monthly cost
   monitor / light         enable monitoring here (banish the Grue)
   cast deploy [template]  cast a deployment spell (bicep/ARM, mock)
   inventory / i           list resources you are carrying
@@ -55,7 +57,11 @@ fn main() {
     let mut world = match backend.build_world() {
         Ok(w) => w,
         Err(e) => {
-            eprintln!("Failed to build world via {} backend: {}", backend.name(), e);
+            eprintln!(
+                "Failed to build world via {} backend: {}",
+                backend.name(),
+                e
+            );
             eprintln!("Tip: run without arguments to use the offline mock backend.");
             std::process::exit(1);
         }
@@ -154,6 +160,8 @@ where
             }
         }
         Command::Lock(t) => println!("{}", world.lock(&t)),
+        Command::Unlock(t) => println!("{}", world.unlock(&t)),
+        Command::Resize(t) => println!("{}", world.resize(&t)),
         Command::Monitor => println!("{}", world.monitor()),
         Command::Inventory => println!("{}", world.inventory()),
         Command::Score => println!("{}", world.score()),
