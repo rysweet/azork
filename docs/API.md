@@ -330,8 +330,9 @@ pub fn fake_runner(params: &MockSizeParams) -> FakeAzRunner;
 ```
 
 - **`MockSizePreset::parse`** — case-insensitive lookup of `small` / `medium`
-  / `large` / `huge`; returns `None` for anything else (callers fall back to
-  `MockSizeParams::parse` for the explicit-count/`COUNTxPER_GROUP` grammar).
+  (`med` shorthand accepted) / `large` / `huge`; returns `None` for anything
+  else (callers fall back to `MockSizeParams::parse` for the
+  explicit-count/`COUNTxPER_GROUP` grammar).
 - **`MockSizeParams::from_preset`** — resolves a named preset to its
   `(resource_groups, resources_per_group)` counts (5×3, 25×5, 100×8, 500×10
   respectively) with `seed = DEFAULT_SEED`.

@@ -131,6 +131,10 @@ AZORK_MOCK_SIZE=large azork   # interactive REPL against a synthetic 100-RG esta
 # Explicit counts: COUNTxPER_GROUP, e.g. 300 resource groups x 12 resources each
 azork crawl --mock-size 300x12 --out big-map.html
 
+# Bare resource-group count: resources-per-group falls back to the
+# medium preset's value (5)
+azork crawl --mock-size 200 --out big-map.html
+
 # Override the seed for a different (but still reproducible) variant:
 azork crawl --mock-size large:7 --serve
 ```
@@ -139,7 +143,7 @@ Env var equivalents, all optional and combinable:
 
 | Variable | Meaning |
 | --- | --- |
-| `AZORK_MOCK_SIZE` | Preset name, bare resource-group count, or `COUNTxPER_GROUP`, same grammar as `--mock-size`. |
+| `AZORK_MOCK_SIZE` | Preset name (`small`/`medium`/`med`/`large`/`huge`), bare resource-group count (resources-per-group falls back to the medium preset's value, 5), or `COUNTxPER_GROUP`, same grammar as `--mock-size`. |
 | `AZORK_MOCK_RGS` | Explicit resource-group count; overrides the count implied by `AZORK_MOCK_SIZE`. |
 | `AZORK_MOCK_RESOURCES_PER_RG` | Explicit resources-per-group count; overrides the value implied by `AZORK_MOCK_SIZE`. |
 | `AZORK_MOCK_SEED` | Deterministic PRNG seed override. |
