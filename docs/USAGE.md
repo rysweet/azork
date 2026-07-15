@@ -8,6 +8,50 @@ Zork-style dungeon. This guide covers everything you can do at the `az>` prompt.
 - Embedding or extending the engine? See the [API / module reference](API.md).
 - Prefer the map view? See [Dungeon Crawler Mode](DUNGEON-CRAWLER.md) for `azork crawl`.
 
+## Command-line reference
+
+`azork` recognizes a small, fixed set of top-level invocations. Anything
+outside this list is rejected up front — the CLI never silently falls through
+to launching the game when it doesn't understand what you typed.
+
+| Invocation | Behavior | Exit code |
+| --- | --- | --- |
+| `azork` | Launch the interactive REPL (offline mock backend). | `0` (on graceful `quit`) |
+| `azork --backend <mock\|az>` / `azork -b <mock\|az>` / `azork --backend=<mock\|az>` | Launch the REPL against the given backend. | `0` |
+| `azork --help` / `azork -h` | Print usage/help text. | `0` |
+| `azork --version` / `azork -V` / `azork version` | Print the AzZork version. | `0` |
+| `azork crawl [--backend <id>] [--serve]` / `azork dungeon ...` | Launch [Dungeon Crawler Mode](DUNGEON-CRAWLER.md). | `0` |
+| `azork update [--check] [--force]` | Run the [self-updater](UPDATING.md). | `0` (or non-zero on update failure) |
+
+Anything not on this list — an unrecognized subcommand or an unrecognized
+flag — is a **usage error**: AzZork prints a one-line diagnostic to **stderr**
+and exits **`2`**, without starting the REPL. This includes bare `help` (not a
+subcommand — use `--help`/`-h`) and typos like `crwal` or `--verison`:
+
+```
+$ azork totally-bogus-subcommand
+azork: unknown subcommand 'totally-bogus-subcommand'
+Try 'azork --help' for usage.
+$ echo $?
+2
+
+$ azork --this-flag-does-not-exist
+azork: unknown flag '--this-flag-does-not-exist'
+Try 'azork --help' for usage.
+$ echo $?
+2
+
+$ azork help
+azork: unknown subcommand 'help'
+Try 'azork --help' for usage.
+$ echo $?
+2
+```
+
+This makes `azork` scriptable: a shell or CI wrapper can rely on a non-zero
+exit code to detect a mistyped invocation instead of it silently opening an
+interactive prompt (see [issue #33](https://github.com/rysweet/azork/issues/33)).
+
 ## Starting the game
 
 ```bash

@@ -165,6 +165,23 @@ full trust model, exit codes, and release flow.
 
 ## Usage
 
+`azork` only recognizes a fixed set of invocations (`--help`/`-h`,
+`--version`/`-V`/`version`, `--backend`/`-b`, `crawl`/`dungeon`, `update`, or no
+args at all). An unrecognized subcommand or flag — including bare `help`,
+which is not itself a subcommand — is a usage error: AzZork prints a message
+to stderr and exits `2` instead of silently opening the REPL:
+
+```bash
+$ azork totally-bogus-subcommand
+azork: unknown subcommand 'totally-bogus-subcommand'
+Try 'azork --help' for usage.
+$ echo $?
+2
+```
+
+See the [Usage guide's command-line reference](docs/USAGE.md#command-line-reference)
+for the full table of accepted invocations and exit codes.
+
 ### Offline mock backend (default — no Azure credentials needed)
 
 ```bash

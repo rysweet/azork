@@ -102,7 +102,9 @@ fn main() {
             );
             return;
         }
-        _ => {}
+        _ => {
+            reject_unrecognized_args_or_exit(&args);
+        }
     }
 
     // Optional, cached, subprocess-safe startup update check. Never hangs or
@@ -244,6 +246,42 @@ fn record_room(memory: &mut GraphMemory, world: &World) {
 /// the mock estate. An explicit-but-empty request (e.g. a trailing `--backend`
 /// with no value) yields `Some("")`, which the caller treats as unrecognized
 /// and warns about rather than silently defaulting.
+/// Validate that every remaining top-level argument is a recognized
+/// `--backend`/`-b` flag before the game launches. Anything else — an
+/// unrecognized subcommand (including bare `help`, which is not a
+/// subcommand; use `--help`/`-h`) or an unrecognized flag — is a usage
+/// error: print a one-line diagnostic to stderr and exit `2` rather than
+/// silently falling through to the REPL. See issue #33.
+fn reject_unrecognized_args_or_exit(args: &[String]) {
+    let mut i = 1;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        match arg {
+            "--backend" | "-b" => {
+                if args.get(i + 1).is_none() {
+                    eprintln!("azork: missing value for '{}'", arg);
+                    eprintln!("Try 'azork --help' for usage.");
+                    std::process::exit(2);
+                }
+                i += 2;
+            }
+            other if other.starts_with("--backend=") => {
+                i += 1;
+            }
+            other if other.starts_with('-') => {
+                eprintln!("azork: unknown flag '{}'", other);
+                eprintln!("Try 'azork --help' for usage.");
+                std::process::exit(2);
+            }
+            other => {
+                eprintln!("azork: unknown subcommand '{}'", other);
+                eprintln!("Try 'azork --help' for usage.");
+                std::process::exit(2);
+            }
+        }
+    }
+}
+
 fn resolve_backend_id() -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
