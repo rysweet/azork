@@ -44,7 +44,7 @@ monitor / light         enable monitoring here (banish the Grue)
 cast deploy [template]  cast a deployment spell (bicep/ARM, mock)
 inventory / i           list resources you are carrying
 score                   report your governance posture (0-100)
-learn <group>           introspect 'az <group> --help' and grow AzZork at runtime
+learn <group>           manually refresh/relearn 'az <group> --help' (auto-discovered at startup too)
 capabilities / caps     list the az capabilities AzZork has learned so far
 recall <query>          ranked recall over AzZork's persistent graph memory
 friction <note>         record something confusing/missing to improve later
@@ -55,18 +55,33 @@ quit / q                leave the dungeon
 ```
 
 AzZork does **not** ship a frozen, hand-maintained table of `az` commands.
-Instead it *derives* its vocabulary from the real CLI and grows as you play:
+Instead it *derives* its vocabulary from the real CLI and grows automatically:
 
-- **`learn <group>`** runs `az <group> --help`, parses the command list, and folds
-  every discovered command into AzZork's [`CapabilityRegistry`] as a new verb.
-  No code edit is needed for AzZork to understand a new `az` command — it is
-  learned, not compiled in.
+- **Automatic startup discovery.** On launch, AzZork enumerates the top-level
+  `az` command groups (`az --help`) and learns any that aren't already cached,
+  folding every discovered command into AzZork's [`CapabilityRegistry`] — no
+  code edit, and no `learn` command, needed for AzZork to understand a new `az`
+  group. Discovery runs on a background thread so it never blocks the first
+  prompt: it recalls the cache first, skips groups already known (warm start
+  stays fast), and streams newly-learned capabilities in between turns as they
+  arrive. There's no arbitrary timeout or group cap — discovery is bounded by
+  however many groups the real `az` CLI reports, and it stands down as soon as
+  you start typing.
+- **`learn <group>`** remains available as an explicit manual refresh: it runs
+  `az <group> --help`, parses the command list, and folds every discovered
+  command into the registry immediately (bypassing the incremental
+  auto-discovery cadence) — handy for forcing a re-learn of a specific group.
 - **Persistence.** Learned capabilities are cached (default
   `~/.local/share/azork/capabilities.tsv`, override with `AZORK_CACHE_DIR`) and
   **recalled on the next launch**, so AzZork accumulates knowledge across
-  sessions.
-- **Adaptive help.** `help` and `capabilities` surface everything learned so far,
-  grouped by `az` command group.
+  sessions regardless of whether it was learned automatically or manually.
+- **Adaptive help.** `help` and `capabilities` surface everything learned so far
+  (automatically or via `learn`), grouped by `az` command group.
+- **Escape hatch.** Set `AZORK_AUTODISCOVER=0` (or `false`/`no`) to disable
+  automatic discovery entirely — useful in offline/CI contexts. Even with
+  discovery enabled, if the real `az` CLI is missing or unauthenticated,
+  startup still succeeds using the cache and built-in verbs; it never crashes
+  or blocks on a broken `az`.
 - **Intent resolution, never a dead end.** Input that matches no built-in verb is
   routed through an agentic [`IntentResolver`]. Its default, fully-offline
   `MockAdapter` ranks your words against learned capabilities and answers with a
@@ -75,8 +90,9 @@ Instead it *derives* its vocabulary from the real CLI and grows as you play:
   live agentic resolver (recipe-runner style) can be slotted in.
 
 All CLI access flows through a single `AzRunner` seam, so the entire
-self-evolution machinery is exercised offline in tests with canned `az` output —
-`cargo test` never calls the real `az` binary or the network.
+self-evolution machinery — automatic startup discovery included — is exercised
+offline in tests with canned `az` output: `cargo test` never calls the real
+`az` binary or the network.
 
 [`CapabilityRegistry`]: src/capabilities/registry.rs
 [`IntentResolver`]: src/agent/mod.rs
@@ -358,6 +374,7 @@ Full documentation lives in [`docs/`](docs/):
 - [Usage guide](docs/USAGE.md) — every command, the Grue mechanic, and scoring.
 - [Tutorial](docs/TUTORIAL.md) — a guided playthrough from first `look` to Cloud Guardian.
 - [Configuration reference](docs/CONFIGURATION.md) — backend selection, the mock world, and the read-only `az` backend.
+- [Auto-Discovery guide](docs/AUTODISCOVERY.md) — how AzZork learns new `az` groups automatically at startup, cache behavior, and the `autodiscover` module API.
 - [Self-Update guide](docs/UPDATING.md) — the `azork update` command, the cached startup check, security/trust model, and release flow.
 - [Development guide](docs/DEVELOPMENT.md) — pre-commit hooks, CI, and test coverage.
 - [API / module reference](docs/API.md) — internal architecture for contributors.

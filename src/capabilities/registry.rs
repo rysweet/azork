@@ -49,10 +49,11 @@ impl CapabilityRegistry {
     pub fn extend(&mut self, caps: impl IntoIterator<Item = Capability>) -> usize {
         let mut added = 0;
         for cap in caps {
-            if !self.caps.contains_key(&cap.key()) {
+            let key = cap.key();
+            if !self.caps.contains_key(&key) {
                 added += 1;
             }
-            self.insert(cap);
+            self.caps.insert(key, cap);
         }
         added
     }
