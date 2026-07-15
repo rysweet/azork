@@ -37,6 +37,8 @@ map of your subscription. Click any room to see what lives inside it.
 - [Command reference](#command-reference)
 - [The map model](#the-map-model)
 - [Dungeon-map rendering](#dungeon-map-rendering)
+- [Adaptive room sizing and corridor spacing](#adaptive-room-sizing-and-corridor-spacing)
+- [Dungeon decorations](#dungeon-decorations)
 - [Why a self-designed renderer (tool evaluation)](#why-a-self-designed-renderer-tool-evaluation)
 - [Azure architecture icons](#azure-architecture-icons)
 - [The optional Playwright pass](#the-optional-playwright-pass)
@@ -151,35 +153,129 @@ actual dungeon rather than a node-link diagram:
   for a type is a one-line change — see [Suggested `az`
   commands](#suggested-az-commands) for how the two stay in sync.
 - **Rooms are walled rectilinear chambers.** Each resource group is drawn as
-  a rectangle with a visible double-line wall, sized to fit the number of
-  resources it contains (more resources → a taller/wider room), not a fixed-
-  size circle or box.
+  a rectangle with a visible double-line wall, **adaptively sized to fit the
+  number of resources it contains** (more resources → a taller/wider room —
+  see [Adaptive room sizing and corridor spacing](#adaptive-room-sizing-and-corridor-spacing)
+  for the exact rule), not a fixed-size circle or box.
 - **Corridors are orthogonal (L-shaped) hallways, not straight edges.**
   Where two rooms share a region or an observed network relationship, the
   renderer draws a right-angled corridor between the nearest wall segments of
   the two rooms, with a **door glyph** (a short perpendicular tick across the
   wall) at each end, matching the "wall + door + corridor" vocabulary used by
-  tools like Dungeon Scrawl rather than a plain connecting line.
+  tools like Dungeon Scrawl rather than a plain connecting line. Rooms sit on
+  a generously spaced grid (see [below](#adaptive-room-sizing-and-corridor-spacing))
+  so corridors always have clear room to route without clipping a wall.
 - **Parchment/grid background.** The SVG canvas is filled with a subtle
   square-grid pattern over an off-white/parchment tone, evoking a graph-paper
   dungeon map rather than a plain white or dark UI background.
 - **Resources are drawn inside their room** as small icon tiles (see [Azure
   architecture icons](#azure-architecture-icons) below), arranged in a simple
-  in-room grid so a room with many resources doesn't overlap its own walls.
+  near-square in-room grid so a room with many resources doesn't overlap its
+  own walls — the room is sized to the grid, not the other way around.
 - **Layout stays a pure function of the map graph.** Room position, size,
   corridor routing, and door placement are all derived deterministically from
   room/resource counts and the stable per-room grid position described in
   [The map model](#the-map-model) — the same subscription always produces
   pixel-identical output, with no random jitter and no external layout
   engine.
+- **Purely decorative border/torch/chest/dragon dressing.** A fixed outer
+  margin surrounds the room/corridor grid; a decorative border frame, evenly
+  spaced torch glyphs, a treasure chest, and a dragon glyph are drawn inside
+  that margin band only — see [Dungeon decorations](#dungeon-decorations).
+  Because rooms and corridors never enter the margin, this dressing can never
+  overlap or collide with the map's interactive content, and (like everything
+  else) it's placed deterministically from the map's overall dimensions —
+  never randomly.
 
 The output is a single self-contained HTML document: inline SVG for the
-dungeon geometry and icons, plus a small amount of vanilla JS for the
-click-to-popup interaction — no build step and no CDN fetch, so it opens and
-looks correct with no network access at all. This is the document produced by
-both `--out` (write to a file) and `--serve` (serve over HTTP); the two share
-one renderer, so the file you save and the page you're served are always the
-same map.
+dungeon geometry, icons, and decorations, plus a small amount of vanilla JS
+for the click-to-popup interaction — no build step and no CDN fetch, so it
+opens and looks correct with no network access at all. This is the document
+produced by both `--out` (write to a file) and `--serve` (serve over HTTP);
+the two share one renderer, so the file you save and the page you're served
+are always the same map.
+
+## Adaptive room sizing and corridor spacing
+
+A room's footprint on the map is a **pure function of how many resources it
+contains** — there is no fixed cap on room size and no scenario where a
+resource group's icons can overflow, clip, or overlap its own walls, no
+matter how large the resource group is.
+
+- **At least one grid cell per resource.** Each room lays its resources out
+  in a near-square icon grid: `cols = ceil(sqrt(n))`, `rows = ceil(n / cols)`,
+  where `n` is the resource count (a room with zero resources is treated as
+  `n = 1` so it still reads as a proper chamber). This guarantees the grid
+  always has `cols * rows >= n` cells — room enough for every resource with
+  no overlap.
+- **Icons never shrink.** Every resource icon renders at the same fixed,
+  legible size regardless of how many resources share a room; the *room*
+  grows to fit the grid, the grid never shrinks to fit the room. This keeps
+  icons readable and their click targets a consistent, predictable size on
+  every map.
+- **A room's pixel size is wall + padding + the icon grid.** Width and height
+  are computed from the grid's content size plus fixed wall thickness, inner
+  padding, and a label header reserved at the top of the room — plus a small
+  minimum footprint so a room with very few resources still reads as a real
+  chamber rather than a cramped sliver.
+- **Example.** A resource group with 4 resources lays out as a 2×2 grid
+  (`cols = ceil(sqrt(4)) = 2`, `rows = ceil(4/2) = 2`); one with 50 resources
+  lays out as an 8×7 grid (`cols = ceil(sqrt(50)) = 8`, `rows = ceil(50/8) =
+  7`, i.e. 56 cells for 50 resources); one with 200 resources lays out as a
+  15×14 grid. In every case, the room's width and height grow to exactly
+  contain that grid — there is no arbitrary resource-count ceiling above
+  which the map stops scaling or resources start overlapping.
+- **Wider inter-room spacing scales with the biggest room on the map.** All
+  rooms sit on one shared, uniform grid whose cell size is derived from the
+  **single largest room's** footprint (across the whole map) plus a fixed,
+  generous gap. That means every room — even small ones — gets enough
+  breathing room around it for an L-shaped corridor to route cleanly, and a
+  map containing one very large resource group automatically widens spacing
+  for *every* room on the map, so large rooms and their corridors never
+  collide with a smaller neighbor's walls.
+- **Corridors always target each room's real wall.** Corridor endpoints are
+  computed from each room's own, individually-adaptive width and height
+  (never a shared constant), so a corridor between a small room and a huge
+  one still meets each room's actual wall exactly, with no gap and no
+  overlap.
+- **Fully deterministic.** Room sizing and grid spacing depend only on
+  resource counts and the stable per-room grid position from [the map
+  model](#the-map-model) — never on wall-clock time, randomness, or run
+  order — so re-rendering the same subscription always produces the same
+  room sizes, the same spacing, and the same corridor paths.
+
+## Dungeon decorations
+
+The map's overall canvas reserves a **fixed outer margin band** around the
+room/corridor grid purely for decorative dressing. Because rooms and
+corridors are always drawn at or inside that margin's inner edge, decorations
+placed within the margin can never overlap a room, a corridor, a resource
+icon, or the click target for any of them — there's no collision detection
+needed because the two regions (interior grid vs. outer margin) never
+intersect by construction.
+
+Decorations are:
+
+- **A decorative border frame.** A stone-wall-style double-line rectangle
+  drawn just inside the canvas edge, visually distinct from each room's own
+  wall stroke, framing the whole map.
+- **Torches along the border.** Small torch glyphs (a post plus a stylized
+  flame) spaced evenly along the top and bottom margin bands.
+- **A treasure chest and a dragon**, placed once each in corners of the
+  margin band that are guaranteed empty — the chest reuses the same bundled
+  "mystery chest" icon artwork used elsewhere on the map, and the dragon is a
+  small, original, geometric line-art glyph (not an Azure icon) bundled as an
+  inline SVG asset and embedded the same way as every other icon:
+  compiled into the binary via `include_str!`, no network fetch, no CDN.
+- **Non-interactive by construction.** Every decoration element carries
+  `pointer-events: none` and none of them use the `.resource` class, so a
+  decoration can never intercept a click meant for a resource icon or
+  spuriously trigger the detail popup.
+- **Deterministic, not random.** Decoration placement is a pure function of
+  the map's overall pixel dimensions (which are themselves a deterministic
+  function of the map graph) — never a random seed or per-run jitter — so
+  re-rendering the same subscription places every decoration in exactly the
+  same spot every time, keeping test output and diffs stable.
 
 ## Why a self-designed renderer (tool evaluation)
 

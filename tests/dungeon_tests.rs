@@ -11,7 +11,7 @@
 //! touches a real `az` binary, real Azure, or the network.
 
 use azork::az_runner::{AzRunner, FakeAzRunner};
-use azork::dungeon::{cli, commands, icons, links, map, playwright, render, server};
+use azork::dungeon::{cli, commands, decorations, icons, links, map, playwright, render, server};
 use azork::secrets::test_fixtures;
 
 // ---------------------------------------------------------------------------
@@ -695,6 +695,178 @@ fn render_html_falls_back_to_default_icon_for_an_unmapped_icon_key() {
     assert!(
         html.contains("icon-mystery-chest") || html.contains(icons::DEFAULT_ICON),
         "an unmapped icon key must fall back to the bundled mystery-chest icon"
+    );
+}
+
+/// Extract every `<rect ... class="room-floor"/>` element's `(x, y, width,
+/// height)` from a rendered document, in source order. Avoids pulling in a
+/// regex dependency for what is simple, predictable, self-generated markup.
+fn room_floor_rects(html: &str) -> Vec<(i32, i32, i32, i32)> {
+    let marker = "class=\"room-floor\"";
+    let mut rects = Vec::new();
+    for (marker_pos, _) in html.match_indices(marker) {
+        // The rect's attributes appear immediately before this marker in the
+        // same element; search only the (small) preceding slice so a later,
+        // unrelated `<rect` elsewhere in the document is never picked up.
+        let search_start = marker_pos.saturating_sub(200);
+        let window = &html[search_start..marker_pos];
+        if let Some(rel_start) = window.rfind("<rect ") {
+            let attrs = &window[rel_start..];
+            let x = attr_i32(attrs, "x");
+            let y = attr_i32(attrs, "y");
+            let w = attr_i32(attrs, "width");
+            let h = attr_i32(attrs, "height");
+            if let (Some(x), Some(y), Some(w), Some(h)) = (x, y, w, h) {
+                rects.push((x, y, w, h));
+            }
+        }
+    }
+    rects
+}
+
+/// Pull an integer attribute value (e.g. `x="123"`) out of a fragment of
+/// SVG markup.
+fn attr_i32(fragment: &str, name: &str) -> Option<i32> {
+    let needle = format!("{name}=\"");
+    let start = fragment.find(&needle)? + needle.len();
+    let end = fragment[start..].find('"')? + start;
+    fragment[start..end].parse().ok()
+}
+
+fn rects_overlap(a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)) -> bool {
+    let (ax, ay, aw, ah) = a;
+    let (bx, by, bw, bh) = b;
+    ax < bx + bw && bx < ax + aw && ay < by + bh && by < ay + ah
+}
+
+/// Build a map with a single room holding `n` resources, used to exercise
+/// adaptive room sizing for rooms with many resources.
+fn map_with_room_of_size(n: usize) -> map::DungeonMap {
+    let resources = (0..n)
+        .map(|i| map::ResourceNode {
+            id: format!(
+                "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/big-rg/providers/Microsoft.Storage/storageAccounts/res{i}"
+            ),
+            name: format!("res{i}"),
+            kind: "Microsoft.Storage/storageAccounts".to_string(),
+            region: "eastus".to_string(),
+            icon: "storage-account".to_string(),
+        })
+        .collect();
+    map::DungeonMap {
+        subscription: "mock".to_string(),
+        rooms: vec![map::Room {
+            id: "big-rg".to_string(),
+            name: "big-rg".to_string(),
+            region: "eastus".to_string(),
+            x: 0,
+            y: 0,
+            resources,
+        }],
+        edges: vec![],
+        partial: false,
+    }
+}
+
+#[test]
+fn render_html_grows_a_room_to_fit_many_resources_without_overflow() {
+    // Enough resources that the pre-existing fixed 4-col/116px room would
+    // silently overflow past its own walls; the adaptive layout must instead
+    // grow the room to fit every icon inside it.
+    let dmap = map_with_room_of_size(25);
+    let html = render::render_html(&dmap);
+
+    let rects = room_floor_rects(&html);
+    assert_eq!(rects.len(), 1, "expected exactly one room-floor rect");
+    let (rx, ry, rw, rh) = rects[0];
+
+    // Every `<use ... x="{ix}" y="{iy}" width="20" height="20" .../>` icon
+    // instance must lie fully within the room's own floor rect.
+    for chunk in html.split("<use ") {
+        if !chunk.contains("icon-storage-account") {
+            continue;
+        }
+        let ix = attr_i32(chunk, "x");
+        let iy = attr_i32(chunk, "y");
+        if let (Some(ix), Some(iy)) = (ix, iy) {
+            assert!(
+                ix >= rx && ix + 20 <= rx + rw,
+                "icon at x={ix} overflows room floor [{rx}, {rx_end}]",
+                rx_end = rx + rw
+            );
+            assert!(
+                iy >= ry && iy + 20 <= ry + rh,
+                "icon at y={iy} overflows room floor [{ry}, {ry_end}]",
+                ry_end = ry + rh
+            );
+        }
+    }
+}
+
+#[test]
+fn render_html_spaces_rooms_so_a_large_room_never_overlaps_its_neighbor() {
+    // A large room (many resources) directly adjacent (dx = 1) to a small
+    // empty room: the pre-existing fixed 150px grid cell would let a grown
+    // room bleed into its neighbor's cell. The adaptive corridor spacing
+    // must derive the grid cell from the *largest* room in the map so this
+    // can never happen.
+    let mut dmap = map_with_room_of_size(40);
+    dmap.rooms.push(map::Room {
+        id: "small-rg".to_string(),
+        name: "small-rg".to_string(),
+        region: "eastus".to_string(),
+        x: 1,
+        y: 0,
+        resources: vec![],
+    });
+    dmap.edges.push(map::Edge {
+        from: "big-rg".to_string(),
+        to: "small-rg".to_string(),
+    });
+
+    let html = render::render_html(&dmap);
+    let rects = room_floor_rects(&html);
+    assert_eq!(rects.len(), 2, "expected two room-floor rects");
+    assert!(
+        !rects_overlap(rects[0], rects[1]),
+        "large room {:?} must not overlap adjacent room {:?}",
+        rects[0],
+        rects[1]
+    );
+}
+
+#[test]
+fn render_html_keeps_decorations_confined_to_the_outer_margin() {
+    let dmap = small_map();
+    let html = render::render_html(&dmap);
+
+    // Every room-floor rect must sit at or beyond the fixed outer margin
+    // band that decorations are confined to, so decorative markup can never
+    // be positioned on top of the room/corridor grid.
+    for (x, y, _, _) in room_floor_rects(&html) {
+        assert!(
+            x >= decorations::MAP_MARGIN,
+            "room x={x} must be at/after the decoration margin"
+        );
+        assert!(
+            y >= decorations::MAP_MARGIN,
+            "room y={y} must be at/after the decoration margin"
+        );
+    }
+    assert!(
+        html.contains("class=\"decoration"),
+        "rendered map must include decorative border/torch/chest/dragon markup"
+    );
+}
+
+#[test]
+fn render_html_of_a_large_adaptive_map_is_still_a_pure_function_of_the_map() {
+    let dmap = map_with_room_of_size(50);
+    let a = render::render_html(&dmap);
+    let b = render::render_html(&dmap);
+    assert_eq!(
+        a, b,
+        "adaptive room sizing/spacing must not introduce any nondeterminism"
     );
 }
 

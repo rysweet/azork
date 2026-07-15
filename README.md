@@ -275,6 +275,12 @@ group at a time: resource groups become **walled rooms** joined by
 official Azure architecture icons** (bundled offline, never hotlinked), and
 shared regions/relationships become the corridors between rooms — drawn on a
 parchment-and-grid background so it reads as a dungeon map, not a graph.
+Rooms scale up automatically to fit however many resources they hold (no
+overlap, no fixed cap), rooms sit on generously spaced corridors, and the
+whole map is framed with a decorative stone-wall border, torches, a treasure
+chest, and a dragon — see
+[docs/DUNGEON-CRAWLER.md](docs/DUNGEON-CRAWLER.md#adaptive-room-sizing-and-corridor-spacing)
+for the full layout and decoration rules.
 
 ```bash
 azork crawl --backend az --serve
