@@ -11,6 +11,8 @@
 //! `pointer-events: none` and no `.resource` class, so it can never
 //! intercept a click meant for a resource icon or open the detail popup.
 
+use std::fmt::Write as _;
+
 /// Outer margin (in px) reserved around the room/corridor grid for border
 /// art and decorations. Rooms and corridors are always placed at
 /// `>= MAP_MARGIN` by `render.rs`, so this band is guaranteed decoration-only
@@ -48,8 +50,8 @@ pub fn build(width: i32, height: i32, chest_icon_inner: &str, chest_view_box: &s
     // Torches at fixed intervals along the top and bottom margin bands.
     let mut x = MAP_MARGIN / 2;
     while x < width - MAP_MARGIN / 2 {
-        out.push_str(&torch(x, MAP_MARGIN / 2 - 10));
-        out.push_str(&torch(x, height - MAP_MARGIN / 2 - 10));
+        torch(&mut out, x, MAP_MARGIN / 2 - 10);
+        torch(&mut out, x, height - MAP_MARGIN / 2 - 10);
         x += TORCH_SPACING;
     }
 
@@ -79,8 +81,12 @@ pub fn build(width: i32, height: i32, chest_icon_inner: &str, chest_view_box: &s
 }
 
 /// A single torch glyph: a post plus a stylized flame, both non-interactive.
-fn torch(cx: i32, cy: i32) -> String {
-    format!(
+/// Writes directly into `out` (the caller's accumulator) rather than
+/// building and returning an intermediate `String`, avoiding an
+/// allocation-and-copy per torch.
+fn torch(out: &mut String, cx: i32, cy: i32) {
+    let _ = write!(
+        out,
         "<g class=\"decoration torch\" pointer-events=\"none\">\
          <rect x=\"{x1}\" y=\"{y1}\" width=\"3\" height=\"14\" class=\"torch-post\"/>\
          <circle cx=\"{cx}\" cy=\"{fy}\" r=\"5\" class=\"torch-flame\"/></g>",
@@ -88,7 +94,7 @@ fn torch(cx: i32, cy: i32) -> String {
         y1 = cy,
         cx = cx,
         fy = cy - 4,
-    )
+    );
 }
 
 /// Strip the outer `<svg ...>...</svg>` wrapper from an embedded decoration

@@ -16,6 +16,7 @@ use crate::dungeon::icon_assets;
 use crate::dungeon::map::{DungeonMap, Room};
 use crate::secrets::scrub;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 
 /// Fixed icon size (px). Rooms grow to fit their resource count rather than
 /// icons shrinking to fit a fixed room, so every icon always renders at a
@@ -129,21 +130,44 @@ pub fn render_html(map: &DungeonMap) -> String {
         let py = room.y * cell + decorations::MAP_MARGIN;
         let layout = &layouts[room.id.as_str()];
 
-        let mut resource_icons = String::new();
+        // Write each room's markup directly into the shared accumulator
+        // buffers (via `write!`) instead of building an intermediate
+        // `String` per room/resource with `format!` and then copying it in
+        // with `push_str` — same output and paint order (floor, wall, label,
+        // then icons on top), one fewer allocation-and-copy per resource and
+        // per room.
+        let _ = write!(
+            svg_rooms,
+            "<g class=\"room\" data-room-id=\"{id}\">\
+             <rect x=\"{px}\" y=\"{py}\" width=\"{w}\" height=\"{h}\" rx=\"3\" class=\"room-floor\"/>\
+             <rect x=\"{px}\" y=\"{py}\" width=\"{w}\" height=\"{h}\" rx=\"3\" class=\"room-wall\"/>\
+             <text x=\"{tx}\" y=\"{ty}\" class=\"room-label\">{name}</text>",
+            id = escape_html(&scrub(&room.id)),
+            px = px,
+            py = py,
+            w = layout.width,
+            h = layout.height,
+            tx = px + 8,
+            ty = py + 18,
+            name = escape_html(&scrub(&room.name)),
+        );
+
         for (i, res) in room.resources.iter().enumerate() {
             let key = icon_assets::canonical_key(&res.icon);
             if defined_icons.insert(key) {
-                svg_icon_defs.push_str(&format!(
+                let _ = write!(
+                    svg_icon_defs,
                     "<symbol id=\"icon-{key}\" viewBox=\"{view_box}\">{inner}</symbol>",
                     key = key,
                     view_box = icon_assets::view_box(key),
                     inner = icon_assets::inner_markup(key),
-                ));
+                );
             }
 
             let ix = px + WALL + ROOM_PADDING + (i as i32 % layout.cols) * (ICON_SIZE + ICON_GAP);
             let iy = py + WALL + ROOM_HEADER + (i as i32 / layout.cols) * (ICON_SIZE + ICON_GAP);
-            resource_icons.push_str(&format!(
+            let _ = write!(
+                svg_rooms,
                 "<g class=\"resource\" data-resource-id=\"{id}\">\
                  <title>{name} ({kind})</title>\
                  <use href=\"#icon-{key}\" x=\"{ix}\" y=\"{iy}\" width=\"{size}\" height=\"{size}\" \
@@ -155,28 +179,10 @@ pub fn render_html(map: &DungeonMap) -> String {
                 ix = ix,
                 iy = iy,
                 size = ICON_SIZE,
-            ));
+            );
         }
 
-        // A "walled chamber": an outer wall stroke plus a slightly inset
-        // floor fill, evoking a hand-drawn dungeon room rather than a flat
-        // node-graph box.
-        svg_rooms.push_str(&format!(
-            "<g class=\"room\" data-room-id=\"{id}\">\
-             <rect x=\"{px}\" y=\"{py}\" width=\"{w}\" height=\"{h}\" rx=\"3\" class=\"room-floor\"/>\
-             <rect x=\"{px}\" y=\"{py}\" width=\"{w}\" height=\"{h}\" rx=\"3\" class=\"room-wall\"/>\
-             <text x=\"{tx}\" y=\"{ty}\" class=\"room-label\">{name}</text>\
-             {icons}</g>",
-            id = escape_html(&scrub(&room.id)),
-            px = px,
-            py = py,
-            w = layout.width,
-            h = layout.height,
-            tx = px + 8,
-            ty = py + 18,
-            name = escape_html(&scrub(&room.name)),
-            icons = resource_icons,
-        ));
+        svg_rooms.push_str("</g>");
     }
 
     for edge in &map.edges {
@@ -186,7 +192,8 @@ pub fn render_html(map: &DungeonMap) -> String {
         ) {
             let a_layout = &layouts[a.id.as_str()];
             let b_layout = &layouts[b.id.as_str()];
-            svg_corridors.push_str(&corridor_path(
+            corridor_path(
+                &mut svg_corridors,
                 a.x * cell + decorations::MAP_MARGIN,
                 a.y * cell + decorations::MAP_MARGIN,
                 a_layout.width,
@@ -195,7 +202,7 @@ pub fn render_html(map: &DungeonMap) -> String {
                 b.y * cell + decorations::MAP_MARGIN,
                 b_layout.width,
                 b_layout.height,
-            ));
+            );
         }
     }
 
@@ -314,9 +321,13 @@ pub fn render_html(map: &DungeonMap) -> String {
 /// dungeon map, replacing a bare diagonal `<line>` between room centers.
 /// Each room's own computed width/height is used (rather than a shared
 /// constant), so a corridor always meets a room's *actual* wall regardless
-/// of how that room's adaptive size differs from its neighbor's.
+/// of how that room's adaptive size differs from its neighbor's. Writes
+/// directly into `out` (the caller's accumulator buffer) rather than
+/// building and returning an intermediate `String`, avoiding an
+/// allocation-and-copy per edge.
 #[allow(clippy::too_many_arguments)]
 fn corridor_path(
+    out: &mut String,
     ax: i32,
     ay: i32,
     a_w: i32,
@@ -325,7 +336,7 @@ fn corridor_path(
     by: i32,
     b_w: i32,
     b_h: i32,
-) -> String {
+) {
     let a_cx = ax + a_w / 2;
     let a_cy = ay + a_h / 2;
     let b_cx = bx + b_w / 2;
@@ -345,29 +356,24 @@ fn corridor_path(
     };
     let mid_x = (exit_x + entry_x) / 2;
 
-    let path = format!(
+    // Path (both stroke and fill layers), then door glyphs at each end,
+    // all written directly into `out`.
+    let _ = write!(
+        out,
         "<path class=\"corridor\" d=\"M {ex} {ey} L {mx} {ey} L {mx} {fy} L {fx} {fy}\"/>\
-         <path class=\"corridor-fill\" d=\"M {ex} {ey} L {mx} {ey} L {mx} {fy} L {fx} {fy}\"/>",
+         <path class=\"corridor-fill\" d=\"M {ex} {ey} L {mx} {ey} L {mx} {fy} L {fx} {fy}\"/>\
+         <rect x=\"{ax}\" y=\"{ay}\" width=\"6\" height=\"12\" class=\"door\"/>\
+         <rect x=\"{bx}\" y=\"{by}\" width=\"6\" height=\"12\" class=\"door\"/>",
         ex = exit_x,
         ey = exit_y,
         mx = mid_x,
         fy = entry_y,
         fx = entry_x,
+        ax = exit_x - 3,
+        ay = exit_y - 6,
+        bx = entry_x - 3,
+        by = entry_y - 6,
     );
-
-    // Door glyphs: small filled rects straddling each wall opening.
-    let door_a = format!(
-        "<rect x=\"{x}\" y=\"{y}\" width=\"6\" height=\"12\" class=\"door\"/>",
-        x = exit_x - 3,
-        y = exit_y - 6
-    );
-    let door_b = format!(
-        "<rect x=\"{x}\" y=\"{y}\" width=\"6\" height=\"12\" class=\"door\"/>",
-        x = entry_x - 3,
-        y = entry_y - 6
-    );
-
-    format!("{path}{door_a}{door_b}")
 }
 
 /// Escape a string for safe inclusion in HTML/SVG text content or
