@@ -53,6 +53,7 @@ const HELP: &str = r#"Commands (Zork verbs -> Azure operations):
   friction <note>         record something confusing/missing to improve later
   memory / mem            summarise what AzZork remembers
   help / ?                show this help
+  version / ver           show the AzZork version
   quit / q                leave the dungeon
 
 Beware: acting in a dark (unmonitored) room invites a Grue to eat you.

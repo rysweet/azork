@@ -127,7 +127,9 @@ primarily a mock-world feature.
 | Variable | Values | Default | Effect |
 | --- | --- | --- | --- |
 | `AZORK_BACKEND` | `mock`, `az`, `real`, `azure` | `mock` | Selects the backend when no `--backend` flag is given. |
-| `AZORK_CACHE_DIR` | any writable directory | see below | Directory for the learned-capability cache (`capabilities.tsv`). |
+| `AZORK_CACHE_DIR` | any writable directory | see below | Directory for the learned-capability cache (`capabilities.tsv`) and graph memory (`memory.graph`). |
+| `AZORK_MAX_ROOMS` | positive integer | `40` | (`az` backend) max resource groups mapped into rooms, so large tenants stay responsive. |
+| `AZORK_MAX_RESOURCE_ROOMS` | positive integer | `8` | (`az` backend) max rooms whose resources are enumerated via `az resource list`. |
 
 ## Persistence
 

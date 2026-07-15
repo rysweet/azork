@@ -65,7 +65,11 @@ Pressing Ctrl-D (EOF) at any prompt ends the session gracefully.
 | `score` | — | Report your governance posture (0–100) and rank. | Governance posture |
 | `learn <group>` | `discover`, `study` | Introspect `az <group> --help` and grow AzZork's vocabulary at runtime; learned verbs persist across sessions. | `az <group> --help` |
 | `capabilities` | `caps`, `powers`, `spells` | List the `az` capabilities AzZork has learned so far. | — |
+| `recall <query>` | `remember <query>` | Ranked recall over AzZork's persistent graph memory. | — |
+| `friction <note>` | — | Record something confusing or missing to improve later. | — |
+| `memory` | `mem`, `recollect` | Summarise what AzZork remembers (rooms, objects, verbs, intents, friction). | — |
 | `help` | `?`, `h` | Show the in-game command list (including learned capabilities). | — |
+| `version` | `ver` | Show the AzZork version. | — |
 | `quit` | `q`, `exit` | Leave the dungeon (prints your final score). | — |
 
 Unrecognized input never crashes and never dead-ends. Instead it is routed
