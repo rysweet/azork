@@ -400,7 +400,10 @@ fn do_update() -> Result<Option<Version>> {
         Some(r) => r,
         None => return Ok(None),
     };
-    // Record that we checked, so a subsequent startup check honours the cooldown.
+    // Record that we checked, so a subsequent startup check honours the
+    // cooldown. Best-effort like the sibling write in check.rs: losing this
+    // write merely causes one extra startup check later, not a correctness
+    // issue, so we don't fail the explicit `azork update` command over it.
     let _ = write_last_check(now_unix());
     install::download_and_replace(&resolved)?;
     Ok(Some(resolved.version))

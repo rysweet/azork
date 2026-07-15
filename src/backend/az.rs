@@ -11,14 +11,21 @@ use super::Backend;
 use crate::parser::Direction;
 use crate::world::{Resource, Room, World};
 use std::io::ErrorKind;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Maximum number of attempts (1 initial + retries) for a single `az` call.
 const MAX_ATTEMPTS: u32 = 3;
 /// Base delay for exponential backoff between retries.
 const BASE_BACKOFF: Duration = Duration::from_millis(400);
+/// Hard wall-clock timeout for a single `az` invocation. `az` can otherwise
+/// block indefinitely (e.g. an interactive device-code/browser login prompt,
+/// or a hung network call), which would freeze the whole game with no way
+/// out for the player.
+const AZ_CALL_TIMEOUT: Duration = Duration::from_secs(30);
+/// How often to poll a running `az` child process for completion.
+const AZ_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Backend that queries the real Azure control plane via `az`.
 pub struct AzBackend;
@@ -54,14 +61,49 @@ impl AzBackend {
 
     /// Perform a single `az` invocation. Returns `(message, retryable)` on error.
     fn run_once(&self, args: &[&str]) -> Result<String, (String, bool)> {
-        let output = Command::new("az").args(args).output().map_err(|e| {
-            // A missing binary is never transient; other spawn errors might be.
-            let retryable = e.kind() != ErrorKind::NotFound;
-            (
-                format!("failed to launch 'az' (is it installed & on PATH?): {}", e),
-                retryable,
-            )
-        })?;
+        let mut child = Command::new("az")
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                // A missing binary is never transient; other spawn errors might be.
+                let retryable = e.kind() != ErrorKind::NotFound;
+                (
+                    format!("failed to launch 'az' (is it installed & on PATH?): {}", e),
+                    retryable,
+                )
+            })?;
+
+        let deadline = Instant::now() + AZ_CALL_TIMEOUT;
+        loop {
+            match child.try_wait() {
+                Ok(Some(_status)) => break,
+                Ok(None) => {
+                    if Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err((
+                            format!(
+                                "'az {}' timed out after {}s (killed)",
+                                args.join(" "),
+                                AZ_CALL_TIMEOUT.as_secs()
+                            ),
+                            true,
+                        ));
+                    }
+                    sleep(AZ_POLL_INTERVAL);
+                }
+                Err(e) => {
+                    return Err((format!("failed to wait on 'az' process: {}", e), true));
+                }
+            }
+        }
+
+        let output = child
+            .wait_with_output()
+            .map_err(|e| (format!("failed to read 'az' output: {}", e), true))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let msg = format!("'az {}' failed: {}", args.join(" "), stderr.trim());
@@ -126,11 +168,17 @@ impl Backend for AzBackend {
     }
 
     fn build_world(&self) -> Result<World, String> {
-        // Current subscription name (best-effort).
+        // Current subscription name (best-effort). If this fails, log why —
+        // the very next `az` call below will likely fail for the same reason
+        // (e.g. not logged in) with a more actionable message, but we don't
+        // want the "unknown-subscription" placeholder to be a silent mystery.
         let subscription = self
             .run(&["account", "show", "--query", "name", "-o", "tsv"])
             .map(|s| s.trim().to_string())
-            .unwrap_or_else(|_| "unknown-subscription".to_string());
+            .unwrap_or_else(|e| {
+                eprintln!("warning: could not determine current subscription: {e}");
+                "unknown-subscription".to_string()
+            });
 
         // Resource groups become rooms.
         let groups_raw = self.run(&[
@@ -207,7 +255,7 @@ impl Backend for AzBackend {
         }
 
         let start = rooms[0].name.clone();
-        Ok(World::new(rooms, &start, &subscription))
+        World::new(rooms, &start, &subscription)
     }
 }
 
