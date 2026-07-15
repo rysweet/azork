@@ -185,12 +185,17 @@ thread_local! {
     static JITTER_STATE: Cell<u64> = const { Cell::new(0) };
 }
 
+/// Process-wide counter used only to decorrelate the per-thread jitter seed
+/// below; each thread that ever computes a jittered backoff claims a
+/// distinct tick from it exactly once.
+static JITTER_SEED_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 fn next_jitter_u64() -> u64 {
     JITTER_STATE.with(|cell| {
         let mut x = cell.get();
         if x == 0 {
-            let seed = Instant::now().elapsed().as_nanos() as u64
-                ^ (std::thread::current().id().as_u64_lossy());
+            let tick = JITTER_SEED_TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let seed = Instant::now().elapsed().as_nanos() as u64 ^ tick;
             x = seed | 1; // xorshift requires a nonzero state.
         }
         // xorshift64*
@@ -200,24 +205,6 @@ fn next_jitter_u64() -> u64 {
         cell.set(x);
         x
     })
-}
-
-/// Extension trait shim: `ThreadId` doesn't expose a stable integer accessor
-/// pre-1.0-of-that-API on all supported toolchains, so derive a `u64` from
-/// its `Debug` output's hash instead — still just decorrelation entropy, no
-/// correctness dependency on the exact value.
-trait ThreadIdLossy {
-    fn as_u64_lossy(&self) -> u64;
-}
-
-impl ThreadIdLossy for std::thread::ThreadId {
-    fn as_u64_lossy(&self) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        format!("{:?}", self).hash(&mut hasher);
-        hasher.finish()
-    }
 }
 
 /// Compute a jittered backoff duration for `attempt` (1-based), honoring
