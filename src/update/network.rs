@@ -8,6 +8,7 @@
 
 use super::{GithubRelease, Result, UpdateError, GITHUB_REPO};
 use std::io::Read;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 /// Per-request timeout. The startup check must stay cheap, so this is short.
@@ -34,13 +35,22 @@ pub(crate) fn validate_download_url(url: &str) -> Result<()> {
     }
 }
 
+/// Return a shared [`ureq::Agent`], building it (and its TLS config + root-cert
+/// store) exactly once. Cloning an agent is cheap (it is `Arc`-backed) and lets
+/// sequential calls — e.g. the archive and its `.sha256` — reuse a connection
+/// instead of paying TLS setup on every request.
 fn agent() -> ureq::Agent {
-    let t = Duration::from_secs(NETWORK_TIMEOUT_SECS);
-    ureq::AgentBuilder::new()
-        .timeout_connect(t)
-        .timeout_read(t)
-        .timeout_write(t)
-        .build()
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT
+        .get_or_init(|| {
+            let t = Duration::from_secs(NETWORK_TIMEOUT_SECS);
+            ureq::AgentBuilder::new()
+                .timeout_connect(t)
+                .timeout_read(t)
+                .timeout_write(t)
+                .build()
+        })
+        .clone()
 }
 
 /// Perform a GET and return the response body, enforcing the host allowlist and

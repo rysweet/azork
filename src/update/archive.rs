@@ -8,7 +8,6 @@
 
 use super::{Result, UpdateError};
 use flate2::read::GzDecoder;
-use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 /// Returns `true` if `path` is safe to extract *within* a destination dir:
@@ -79,12 +78,13 @@ pub fn extract_binary(archive_bytes: &[u8], binary_name: &str, dest_dir: &Path) 
         }
 
         let dest = dest_dir.join(binary_name);
-        let mut buf = Vec::new();
-        entry.read_to_end(&mut buf).map_err(|e| {
-            UpdateError::Archive(format!("cannot read {binary_name} from tar: {e}"))
+        // Stream the entry straight to disk rather than buffering the whole
+        // binary in memory first.
+        let mut out = std::fs::File::create(&dest)
+            .map_err(|e| UpdateError::Io(format!("create {}: {e}", dest.display())))?;
+        std::io::copy(&mut entry, &mut out).map_err(|e| {
+            UpdateError::Archive(format!("cannot extract {binary_name} from tar: {e}"))
         })?;
-        std::fs::write(&dest, &buf)
-            .map_err(|e| UpdateError::Io(format!("write {}: {e}", dest.display())))?;
         set_executable(&dest)?;
         return Ok(dest);
     }
