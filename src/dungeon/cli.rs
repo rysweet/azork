@@ -48,6 +48,32 @@ pub fn is_crawl_subcommand(arg: &str) -> bool {
     arg == "crawl" || arg == "dungeon"
 }
 
+/// Usage/help text for `azork crawl` / `azork dungeon`, printed when
+/// `--help`/`-h` is passed and on request exits 0 rather than being treated
+/// as an unknown flag.
+pub const CRAWL_HELP: &str = r#"azork crawl [--backend <id>] [--serve] [--port <n>] [--out <path>]
+            [--budget <n>] [--playwright]
+
+Render the Dungeon Crawler map (alias: azork dungeon).
+
+Flags:
+  --backend <id>, -b <id>  backend to explore, default "mock" (same ids as the REPL)
+  --serve                  start the embedded HTTP server
+  --port <n>               port for --serve, default 0 (OS-assigned free port)
+  --out <path>             write the rendered map to a file
+  --budget <n>             room/exploration budget, default 64
+  --playwright             best-effort richer render; degrades gracefully to the
+                           native renderer if unavailable
+  --help, -h               show this help and exit
+"#;
+
+/// Whether `args` (the flags following the `crawl`/`dungeon` subcommand)
+/// requests help via `--help`/`-h`. Checked ahead of [`parse`] so that help
+/// short-circuits regardless of its position among other flags.
+pub fn wants_help(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--help" || a == "-h")
+}
+
 /// Parse the flags following the `crawl`/`dungeon` subcommand name.
 ///
 /// Unknown flags, or a value that fails to parse for a typed flag (e.g. a
@@ -58,6 +84,12 @@ pub fn parse(args: &[String]) -> Result<CrawlArgs, String> {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--help" | "-h" => {
+                // Handled by `wants_help` before `parse` is called in
+                // ordinary CLI dispatch, but guard here too so any direct
+                // caller of `parse` doesn't get "unknown flag '--help'".
+                return Err("help requested".to_string());
+            }
             "--backend" | "-b" => {
                 i += 1;
                 parsed.backend = args

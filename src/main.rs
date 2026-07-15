@@ -67,6 +67,10 @@ fn main() {
     if let Some(first) = args.get(1) {
         if dungeon_cli::is_crawl_subcommand(first) {
             let rest: Vec<String> = args[2..].to_vec();
+            if dungeon_cli::wants_help(&rest) {
+                print!("{}", dungeon_cli::CRAWL_HELP);
+                return;
+            }
             match dungeon_cli::parse(&rest) {
                 Ok(crawl_args) => run_crawl(crawl_args),
                 Err(e) => {
@@ -81,6 +85,16 @@ fn main() {
     // Top-level subcommands / flags handled before the game starts.
     match args.get(1).map(String::as_str) {
         Some("update") => {
+            if args.iter().any(|a| a == "--help" || a == "-h") {
+                println!(
+                    "azork update [--check]\n\n\
+                     Self-update AzZork to the latest release.\n\n\
+                     Flags:\n  \
+                     --check       check for an available update without installing it\n  \
+                     --help, -h    show this help and exit\n"
+                );
+                return;
+            }
             let check_only = args.iter().any(|a| a == "--check");
             std::process::exit(update::run_update_with(check_only));
         }

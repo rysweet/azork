@@ -196,6 +196,83 @@ fn version_flag_still_exits_zero() {
     );
 }
 
+/// Regression coverage for https://github.com/rysweet/azork/issues/51:
+/// `azork crawl --help`, `azork crawl -h`, and `azork dungeon --help` used
+/// to be rejected as an "unknown flag" with exit code 2 instead of printing
+/// usage text for the subcommand.
+#[test]
+fn crawl_and_dungeon_help_flags_exit_zero_and_print_usage() {
+    for (subcommand, flag) in [
+        ("crawl", "--help"),
+        ("crawl", "-h"),
+        ("dungeon", "--help"),
+        ("dungeon", "-h"),
+    ] {
+        let out = Command::new(azork_binary())
+            .arg(subcommand)
+            .arg(flag)
+            .output()
+            .expect("failed to spawn azork binary");
+
+        assert!(
+            out.status.success(),
+            "azork {subcommand} {flag} must exit zero, got status {:?}",
+            out.status
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        for flag_doc in [
+            "--backend",
+            "--serve",
+            "--port",
+            "--out",
+            "--budget",
+            "--playwright",
+        ] {
+            assert!(
+                stdout.contains(flag_doc),
+                "azork {subcommand} {flag} help text should document {flag_doc}, got: {stdout:?}"
+            );
+        }
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.is_empty(),
+            "azork {subcommand} {flag} should not print to stderr, got: {stderr:?}"
+        );
+    }
+}
+
+/// Regression coverage for https://github.com/rysweet/azork/issues/51:
+/// `azork update --help` used to silently ignore `--help` and perform a
+/// real (network) update check instead of showing usage text.
+#[test]
+fn update_help_flag_exits_zero_and_does_not_perform_update() {
+    for flag in ["--help", "-h"] {
+        let out = Command::new(azork_binary())
+            .arg("update")
+            .arg(flag)
+            .env("AZORK_NO_UPDATE_CHECK", "1")
+            .output()
+            .expect("failed to spawn azork binary");
+
+        assert!(
+            out.status.success(),
+            "azork update {flag} must exit zero, got status {:?}",
+            out.status
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("--check"),
+            "azork update {flag} help text should document --check, got: {stdout:?}"
+        );
+        assert!(
+            !stdout.to_lowercase().contains("checking for update")
+                && !stdout.to_lowercase().contains("downloading")
+                && !stdout.to_lowercase().contains("latest release is"),
+            "azork update {flag} must not perform an actual update check, got: {stdout:?}"
+        );
+    }
+}
+
 #[test]
 fn no_args_still_launches_mock_game() {
     // No arguments should still launch the interactive mock-backend game.
