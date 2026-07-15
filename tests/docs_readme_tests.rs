@@ -3,11 +3,10 @@
 //! Contract tests for the documentation-cleanup requirements tracked by this
 //! change:
 //!
-//! 1. No internal Microsoft project codenames anywhere outside `vendor/`
-//!    (which is third-party vendored code we don't own). The forbidden
-//!    codenames are assembled at runtime below (never spelled out as a
-//!    literal, contiguous string in this source file) so that this test
-//!    file itself does not trip the very check it enforces.
+//! 1. No internal Microsoft project codenames anywhere in the tracked tree.
+//!    The forbidden codenames are assembled at runtime below (never spelled
+//!    out as a literal, contiguous string in this source file) so that this
+//!    test file itself does not trip the very check it enforces.
 //! 2. `README.md` no longer carries a top-level `## Architecture` section
 //!    (nor a dangling ToC/anchor link to one).
 //! 3. `README.md` no longer presents the outside-in-testing (OIT) agent as a
@@ -28,9 +27,9 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Recursively collects every file under `dir`, skipping `vendor/`, `.git/`,
-/// and `target/` (build artifacts / vendored third-party code / VCS
-/// internals are out of scope for the codename check).
+/// Recursively collects every file under `dir`, skipping `.git/`, `target/`,
+/// `worktrees/`, and `.claude/` (VCS internals, build artifacts, worktree
+/// checkouts, and tool config are out of scope for the codename check).
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
@@ -40,12 +39,7 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name == "vendor"
-            || name == ".git"
-            || name == "target"
-            || name == "worktrees"
-            || name == ".claude"
-        {
+        if name == ".git" || name == "target" || name == "worktrees" || name == ".claude" {
             continue;
         }
         if path.is_dir() {
@@ -57,13 +51,13 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 /// Requirement 1: zero occurrences of either forbidden internal codename
-/// (case insensitive) anywhere outside `vendor/`.
+/// (case insensitive) anywhere in the tracked tree.
 ///
 /// The codenames are assembled from non-matching substrings at runtime
 /// (rather than written as contiguous literals) so this test file itself
 /// stays clean under a literal `git grep` for them.
 #[test]
-fn no_internal_codenames_outside_vendor() {
+fn no_internal_codenames_in_tree() {
     let root = repo_root();
     let mut files = Vec::new();
     collect_files(&root, &mut files);
@@ -87,7 +81,7 @@ fn no_internal_codenames_outside_vendor() {
 
     assert!(
         offenders.is_empty(),
-        "found internal codename references outside vendor/: {:?}",
+        "found internal codename references: {:?}",
         offenders
     );
 }

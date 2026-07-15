@@ -1,24 +1,27 @@
-//! Embedded agentic recipe-running capability.
+//! Agentic recipe-running capability, driven by [`recipe-runner-rs`].
 //!
-//! This module embeds the [`recipe-runner-rs`] engine directly into AzZork's
-//! default build (via a vendored, offline `path` dependency — see
-//! `vendor/recipe-runner-rs/`). It implements the runner's
-//! [`Adapter`](recipe_runner_rs::adapters::Adapter) trait, then hands it to
-//! `run_recipe`, letting an amplihack recipe orchestrate multi-step intent
-//! resolution (agent steps + bash steps) around AzZork's own learned
+//! This module depends on and drives the [`recipe-runner-rs`] engine — AzZork
+//! does not embed itself into the runner; instead [`AzorkAdapter`] implements
+//! the runner's [`Adapter`](recipe_runner_rs::adapters::Adapter) trait so
+//! AzZork can act as the agent the runner calls out to. `run_intent_recipe`
+//! hands an inline amplihack recipe to `run_recipe`, letting the runner
+//! orchestrate multi-step intent resolution (agent steps + bash steps) around
+//! AzZork's own learned
 //! [`CapabilityRegistry`](crate::capabilities::CapabilityRegistry).
 //!
 //! It is deterministic where it can be: an *agent step* resolves its prompt
 //! against the learned registry via AzZork's offline resolver (no LLM, no
-//! network), while *bash steps* are delegated to the runner's standard CLI
-//! subprocess adapter so recipes can still shell out to `az` for real work.
+//! network needed at runtime to resolve intent), while *bash steps* are
+//! delegated to the runner's standard CLI subprocess adapter so recipes can
+//! still shell out to `az` for real work.
 //!
-//! Because `recipe-runner-rs` is vendored offline and depended on directly by
-//! this crate, `cargo build`/`cargo test` at the repo root compile and
-//! exercise this capability by default — no separate opt-in crate or
-//! side-by-side sibling checkout is required.
+//! `recipe-runner-rs` is a normal (git) dependency of this crate, so
+//! `cargo build`/`cargo test` at the repo root compile and exercise this
+//! capability by default — it ships as part of the default build because the
+//! dependency is non-optional and unfeatured, not because the source is
+//! copied into this repo.
 //!
-//! [`recipe-runner-rs`]: ../../vendor/recipe-runner-rs/
+//! [`recipe-runner-rs`]: https://github.com/rysweet/amplihack-recipe-runner
 
 use std::collections::HashMap;
 
@@ -30,11 +33,13 @@ use recipe_runner_rs::run_recipe;
 use crate::agent::{Adapter, MockAdapter};
 use crate::capabilities::CapabilityRegistry;
 
-/// Embeds AzZork into the `recipe-runner-rs` [`RecipeAdapter`] seam.
+/// Implements the `recipe-runner-rs` [`RecipeAdapter`] seam so AzZork can act
+/// as the agent the runner calls — AzZork drives the runner, it is not
+/// embedded into it.
 ///
 /// * Agent steps → resolve the prompt against learned capabilities using
-///   AzZork's deterministic offline resolver (so the default agentic path stays
-///   reproducible and network-free).
+///   AzZork's deterministic offline resolver (so intent resolution stays
+///   reproducible and network-free at runtime).
 /// * Bash steps → delegate to the runner's [`CLISubprocessAdapter`], letting a
 ///   recipe shell out (e.g. to `az`) when it genuinely needs to.
 pub struct AzorkAdapter {
@@ -165,13 +170,14 @@ mod tests {
     }
 
     #[test]
-    fn embedded_by_default_build_compiles_and_runs() {
+    fn agent_engine_is_part_of_default_build_compiles_and_runs() {
         // Regression test proving the agentic capability is part of the default
         // build (no feature flag, no separate crate): if this test compiles and
-        // passes under plain `cargo test`, `agent_engine` is embedded, not opt-in.
+        // passes under plain `cargo test`, `agent_engine` ships by default, not
+        // as an opt-in.
         assert!(!INTENT_RESOLUTION_RECIPE.is_empty());
         let res = run_intent_recipe(INTENT_RESOLUTION_RECIPE, registry(), true)
-            .expect("embedded recipe engine should run offline by default");
+            .expect("default recipe engine should resolve intent offline at runtime");
         assert!(res.success);
     }
 

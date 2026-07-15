@@ -12,12 +12,11 @@ name = "azork"
 path = "src/main.rs"
 
 [features]
-# The default build embeds the agentic recipe-running capability (see the
-# `agent_engine` module) via a vendored, offline `path` dependency on
-# `recipe-runner-rs` (see `vendor/recipe-runner-rs/`), so `cargo build`/`cargo
-# test` stay fully offline and reproducible on a fresh clone while still
-# shipping the agentic capability by default — no network fetch, no opt-in
-# companion crate to build separately.
+# The default build ships the agentic recipe-running capability (see the
+# `agent_engine` module) via a normal git dependency on `recipe-runner-rs`
+# (pinned to a specific commit for reproducibility; see the `[dependencies]`
+# section below), so the capability is part of the default build — it is
+# NOT gated behind a feature flag or an opt-in companion crate.
 #
 # Durable persistence backed by the native `amplihack-memory` (SQLite/lbug) store
 # is provided by the opt-in `memory-store/` companion crate, NOT by a dependency
@@ -37,4 +36,4 @@ flate2 = "1"
 tar = "0.4"
 ureq = "2"
 anyhow = "1"
-recipe-runner-rs = { path = "vendor/recipe-runner-rs" }
+recipe-runner-rs = { git = "https://github.com/rysweet/amplihack-recipe-runner", rev = "90b91f941d0b7487c7bb1d92eca0a4140a630706" }
