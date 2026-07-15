@@ -105,7 +105,16 @@ fn main() {
         _ => {}
     }
 
-    reject_unrecognized_args_or_exit(&args);
+    // Anything left in `args[1]`'s position that isn't a recognized launch
+    // flag for the game itself (`--backend`/`-b`, `--backend=<id>`) is not a
+    // usage error — it's an intent AzZork hasn't parsed yet. Route it through
+    // the same offline IntentResolver the interactive REPL uses instead of
+    // rejecting it (see issue #33; PR #37's hard-reject defeated the whole
+    // point of an agentic CLI).
+    if let Some(raw) = unrecognized_top_level_intent(&args) {
+        print_top_level_intent_resolution(&raw);
+        return;
+    }
 
     // Optional, cached, subprocess-safe startup update check. Never hangs or
     // prompts under CI / non-TTY; see `update::check`.
@@ -239,51 +248,34 @@ fn record_room(memory: &mut GraphMemory, world: &World) {
     }
 }
 
-/// Reject any unrecognized top-level subcommand or flag rather than silently
-/// falling through into the interactive game.
+/// If `args[1]` is not a recognized launch flag for the game itself
+/// (`--backend`/`-b`, `--backend=<id>`), return the remaining words joined as
+/// natural-language intent text.
 ///
 /// By the time this runs, `crawl`/`dungeon`, `update`, `--version`/`-V`/`version`,
-/// and `--help`/`-h` have already been handled (and returned/exited). Anything
-/// else in `args[1]`'s position is either:
-///   - a recognized flag for launching the game itself (`--backend`/`-b`,
-///     `--backend=<id>`), which is allowed through, or
-///   - an unrecognized subcommand (a bare word) or an unrecognized flag
-///     (starts with `-`), which is a usage error.
-fn reject_unrecognized_args_or_exit(args: &[String]) {
-    let mut i = 1;
-    while i < args.len() {
-        let arg = args[i].as_str();
-        match arg {
-            "--backend" | "-b" => {
-                // Skip the flag and its value (if any); the value itself is
-                // not validated here (unrecognized backend ids just warn and
-                // fall back to mock, handled later in `resolve_backend_id`).
-                i += 2;
-                continue;
-            }
-            other if other.starts_with("--backend=") => {
-                i += 1;
-                continue;
-            }
-            other if other.starts_with('-') => {
-                eprintln!(
-                    "azork: unknown flag '{}'\nTry 'azork --help' for usage.",
-                    other
-                );
-                std::process::exit(2);
-            }
-            other => {
-                if i == 1 {
-                    eprintln!(
-                        "azork: unknown subcommand '{}'\nTry 'azork --help' for usage.",
-                        other
-                    );
-                    std::process::exit(2);
-                }
-                i += 1;
-            }
-        }
+/// and `--help`/`-h` have already been handled (and returned/exited), so
+/// anything still in `args[1]`'s position — a bare word or any other flag —
+/// is not a usage error; it's input for the [`IntentResolver`] to make sense
+/// of, exactly like an unrecognized line typed at the interactive `az>`
+/// prompt.
+fn unrecognized_top_level_intent(args: &[String]) -> Option<String> {
+    match args.get(1).map(String::as_str) {
+        None => None,
+        Some("--backend") | Some("-b") => None,
+        Some(other) if other.starts_with("--backend=") => None,
+        Some(_) => Some(args[1..].join(" ")),
     }
+}
+
+/// Resolve unrecognized top-level CLI input the same way the interactive
+/// REPL resolves an unrecognized line: via the offline [`IntentResolver`]
+/// against the learned [`CapabilityRegistry`], never a hard failure.
+fn print_top_level_intent_resolution(raw: &str) {
+    let cache_path = default_cache_path();
+    let registry = CapabilityRegistry::load(&cache_path);
+    let resolver = IntentResolver::new(MockAdapter::new(), &registry);
+    let resolution = resolver.resolve(raw);
+    println!("{}", resolution.narrate());
 }
 
 /// Determine which backend the user explicitly requested via `--backend <id>`
