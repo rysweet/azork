@@ -66,15 +66,46 @@ impl AzBackend {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let retryable = is_transient(&stderr);
-            // `az` stderr is attacker/environment-influenced text we did not
-            // generate; scrub it before it can reach a println!/eprintln! or
-            // be persisted, in case it ever echoes a token or connection
-            // string back (e.g. from a misconfigured extension or `--debug`).
-            let msg = format!("'az {}' failed: {}", args.join(" "), scrub(stderr.trim()));
+            let msg = format_az_error(args, &stderr);
             return Err((msg, retryable));
         }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        // `az` stdout is attacker/environment-influenced text we did not
+        // generate (resource names, tags, etc. can contain arbitrary text);
+        // scrub it before it can reach a println!/eprintln! or be persisted,
+        // symmetric with the error path below, in case it ever echoes a
+        // token or connection string back.
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(scrub(&stdout))
     }
+}
+
+/// Build the failure message for a non-zero-exit `az` invocation.
+///
+/// `stderr` is attacker/environment-influenced text we did not generate; it
+/// is scrubbed before it can reach a `println!`/`eprintln!` or be persisted,
+/// in case it ever echoes a token or connection string back (e.g. from a
+/// misconfigured extension or `--debug`).
+fn format_az_error(args: &[&str], stderr: &str) -> String {
+    format!("'az {}' failed: {}", args.join(" "), scrub(stderr.trim()))
+}
+
+/// Parse `az ... -o tsv` output of two-column `name<TAB>value` rows into
+/// `(name, value)` pairs, skipping rows with an empty name. Used for both
+/// resource-group listings (`name`, `location`) and resource listings
+/// (`name`, `type`); malformed rows (missing columns, stray tabs) are
+/// tolerated rather than causing a panic.
+fn parse_name_value_tsv(raw: &str, fallback_value: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    for line in raw.lines() {
+        let mut cols = line.split('\t');
+        if let Some(name) = cols.next() {
+            let value = cols.next().unwrap_or(fallback_value).to_string();
+            if !name.trim().is_empty() {
+                pairs.push((name.trim().to_string(), value.trim().to_string()));
+            }
+        }
+    }
+    pairs
 }
 
 /// Heuristic: decide whether an `az` stderr message describes a transient
@@ -148,16 +179,7 @@ impl Backend for AzBackend {
             "tsv",
         ])?;
 
-        let mut groups: Vec<(String, String)> = Vec::new();
-        for line in groups_raw.lines() {
-            let mut cols = line.split('\t');
-            if let Some(name) = cols.next() {
-                let loc = cols.next().unwrap_or("unknown").to_string();
-                if !name.trim().is_empty() {
-                    groups.push((name.trim().to_string(), loc.trim().to_string()));
-                }
-            }
-        }
+        let groups = parse_name_value_tsv(&groups_raw, "unknown");
 
         if groups.is_empty() {
             return Err(
@@ -194,18 +216,12 @@ impl Backend for AzBackend {
                 "-o",
                 "tsv",
             ]) {
-                for line in res_raw.lines() {
-                    let mut cols = line.split('\t');
-                    if let Some(rname) = cols.next() {
-                        let rtype = cols.next().unwrap_or("resource").to_string();
-                        if !rname.trim().is_empty() {
-                            room = room.with_resource(Resource::new(
-                                rname.trim(),
-                                rtype.trim(),
-                                &format!("A live {} named {}.", rtype.trim(), rname.trim()),
-                            ));
-                        }
-                    }
+                for (rname, rtype) in parse_name_value_tsv(&res_raw, "resource") {
+                    room = room.with_resource(Resource::new(
+                        &rname,
+                        &rtype,
+                        &format!("A live {} named {}.", rtype, rname),
+                    ));
                 }
             }
 
@@ -270,39 +286,32 @@ mod tests {
 
     #[test]
     fn az_error_messages_are_scrubbed_of_secrets() {
-        let backend = AzBackend::new();
-        // Exercise the real formatting path used by `run_once` on failure by
-        // reproducing its message construction with a stderr blob that would
-        // leak a secret if not scrubbed. This proves the integration point
-        // without depending on a real `az` binary being installed.
+        // Exercise the real error-formatting function used by `run_once` on
+        // failure, proving the integration point without depending on a
+        // real `az` binary being installed.
         let hostile_stderr = "ERROR: token: abc123SECRETXYZ AccountKey=SGVsbG8gV29ybGQh==";
-        let msg = format!(
-            "'az {}' failed: {}",
-            ["account", "show"].join(" "),
-            scrub(hostile_stderr.trim())
-        );
+        let msg = format_az_error(&["account", "show"], hostile_stderr);
         assert!(!msg.contains("abc123SECRETXYZ"));
         assert!(!msg.contains("SGVsbG8gV29ybGQh"));
-        let _ = backend; // constructed only to document the call site above
+    }
+
+    #[test]
+    fn az_success_output_is_scrubbed_of_secrets() {
+        // The success path must scrub stdout symmetrically with the error
+        // path: a hostile resource property could still contain
+        // secret-shaped text (e.g. echoed connection strings).
+        let hostile_stdout = "name\tAccountKey=SGVsbG8gV29ybGQh==";
+        let scrubbed = scrub(hostile_stdout);
+        assert!(!scrubbed.contains("SGVsbG8gV29ybGQh"));
     }
 
     #[test]
     fn build_world_handles_malformed_tsv_without_panicking() {
         // Lines with missing columns, empty names, or stray tabs must not
-        // panic when parsed the way `build_world` parses `az ... -o tsv`
-        // output. This mirrors the parsing loop in `build_world` directly
-        // since that method requires a real `az` binary to invoke end-to-end.
+        // panic when parsed by the real function `build_world` uses to
+        // parse `az ... -o tsv` output.
         let malformed = "\n\t\tunnamed\n\tlocation-only\ngoodname\tgoodloc\n\t\t\t\t";
-        let mut groups: Vec<(String, String)> = Vec::new();
-        for line in malformed.lines() {
-            let mut cols = line.split('\t');
-            if let Some(name) = cols.next() {
-                let loc = cols.next().unwrap_or("unknown").to_string();
-                if !name.trim().is_empty() {
-                    groups.push((name.trim().to_string(), loc.trim().to_string()));
-                }
-            }
-        }
+        let groups = parse_name_value_tsv(malformed, "unknown");
         assert!(groups.iter().any(|(n, _)| n == "goodname"));
     }
 }
