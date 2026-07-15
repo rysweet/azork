@@ -19,5 +19,13 @@ path = "src/main.rs"
 # offline, and green.
 default = []
 persistent = []
+# `agentic` bridges azork's intent resolver into the `recipe-runner-rs` `Adapter`
+# seam so ambiguous intents can be resolved by running an amplihack recipe —
+# mirroring how Simard and Powderfinger embed the runner. It pulls heavier,
+# edition-2024 dependencies, so it is opt-in and never links into the default
+# offline build. Enable with `--features agentic`.
+agentic = ["dep:recipe-runner-rs", "dep:anyhow"]
 
 [dependencies]
+recipe-runner-rs = { path = "../../../../amplihack-recipe-runner", optional = true }
+anyhow = { version = "1", optional = true }
