@@ -176,6 +176,10 @@ manually from the [Releases page](https://github.com/rysweet/azork/releases).
 
 To uninstall, simply remove the binary: `rm $(command -v azork)`.
 
+See the [full Install guide](docs/INSTALL.md) for the checksum verification
+model, `AZORK_INSTALL_DIR`/`AZORK_VERSION` details, `--help`/`--print-url`
+flags, and a troubleshooting table.
+
 ### Alternative: build from source
 
 Requires a Rust toolchain (`cargo`). Install directly from GitHub without

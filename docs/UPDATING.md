@@ -16,6 +16,7 @@ The updater is designed to stay **out of the way**:
   tests**.
 
 - New here? Start with the [Usage guide](USAGE.md).
+- Installing for the first time? See the [Install guide](INSTALL.md).
 - Configuring backends and environment? See the [Configuration reference](CONFIGURATION.md).
 - Building releases or contributing? See the [Development guide](DEVELOPMENT.md).
 

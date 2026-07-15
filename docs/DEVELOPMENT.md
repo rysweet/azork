@@ -5,6 +5,7 @@ This guide covers the contributor workflow for AzZork: local quality gates
 
 - Player docs: [Usage guide](USAGE.md), [Tutorial](TUTORIAL.md).
 - Internals: [API / module reference](API.md).
+- Installing prebuilt binaries: [Install guide](INSTALL.md).
 - Self-update mechanism & releases: [Self-Update guide](UPDATING.md).
 
 ## Everyday commands
