@@ -13,6 +13,7 @@
 //! Nothing here calls `az` directly — everything goes through an injected
 //! [`crate::az_runner::AzRunner`], so derivation is fully testable offline.
 
+pub mod autodiscover;
 pub mod derive;
 pub mod registry;
 

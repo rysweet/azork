@@ -44,7 +44,7 @@ monitor / light         enable monitoring here (banish the Grue)
 cast deploy [template]  cast a deployment spell (bicep/ARM, mock)
 inventory / i           list resources you are carrying
 score                   report your governance posture (0-100)
-learn <group>           introspect 'az <group> --help' and grow AzZork at runtime
+learn <group>           manually re-introspect 'az <group> --help' (auto-discovered at startup too)
 capabilities / caps     list the az capabilities AzZork has learned so far
 recall <query>          ranked recall over AzZork's persistent graph memory
 friction <note>         record something confusing/missing to improve later
@@ -55,18 +55,32 @@ quit / q                leave the dungeon
 ```
 
 AzZork does **not** ship a frozen, hand-maintained table of `az` commands.
-Instead it *derives* its vocabulary from the real CLI and grows as you play:
+Instead it *derives* its vocabulary from the real CLI, and now does so
+**automatically at startup** — you don't have to ask it to learn:
 
-- **`learn <group>`** runs `az <group> --help`, parses the command list, and folds
-  every discovered command into AzZork's [`CapabilityRegistry`] as a new verb.
-  No code edit is needed for AzZork to understand a new `az` command — it is
-  learned, not compiled in.
-- **Persistence.** Learned capabilities are cached (default
-  `~/.local/share/azork/capabilities.tsv`, override with `AZORK_CACHE_DIR`) and
-  **recalled on the next launch**, so AzZork accumulates knowledge across
-  sessions.
-- **Adaptive help.** `help` and `capabilities` surface everything learned so far,
-  grouped by `az` command group.
+- **Startup auto-discovery.** On launch AzZork enumerates the top-level `az`
+  command groups (`az --help`), recalls whatever is already cached, and learns
+  only what's missing by running `az <group> --help` for each new group,
+  folding every discovered command into AzZork's [`CapabilityRegistry`] — all
+  before you type your first command. Discovery runs on a background thread
+  and streams results in as they arrive, so it never blocks the first prompt
+  or hangs the game waiting on `az`; it isn't bounded by any fixed timeout or
+  group-count cap, just by the real (finite) list of groups `az` reports.
+- **`learn <group>`** remains available as an explicit manual refresh — it
+  reuses the same discovery machinery to (re-)learn a specific group on
+  demand. No code edit is needed for AzZork to understand a new `az` command
+  — it is learned, not compiled in.
+- **Persistence.** Learned capabilities (auto-discovered or manually learned)
+  are cached (default `~/.local/share/azork/capabilities.tsv`, override with
+  `AZORK_CACHE_DIR`) and **recalled on the next launch**, so AzZork
+  accumulates knowledge across sessions and only discovers what it doesn't
+  already know.
+- **Escape hatch.** Set `AZORK_AUTODISCOVER=0` to disable startup
+  auto-discovery entirely (e.g. offline/CI contexts) — `learn <group>` still
+  works manually. If the real `az` CLI is unavailable, startup still succeeds
+  using cached/built-in verbs with a friendly message, never a crash.
+- **Adaptive help.** `help` and `capabilities` surface everything learned so far
+  (auto-discovered and manually learned alike), grouped by `az` command group.
 - **Intent resolution, never a dead end.** Input that matches no built-in verb is
   routed through an agentic [`IntentResolver`]. Its default, fully-offline
   `MockAdapter` ranks your words against learned capabilities and answers with a
@@ -74,9 +88,10 @@ Instead it *derives* its vocabulary from the real CLI and grows as you play:
   you meant* rather than failing. The `Adapter` trait is the seam where a richer,
   live agentic resolver (recipe-runner style) can be slotted in.
 
-All CLI access flows through a single `AzRunner` seam, so the entire
-self-evolution machinery is exercised offline in tests with canned `az` output —
-`cargo test` never calls the real `az` binary or the network.
+All CLI access — including startup auto-discovery — flows through a single
+`AzRunner` seam, so the entire self-evolution machinery is exercised offline in
+tests with canned `az` output — `cargo test` never calls the real `az` binary
+or the network.
 
 [`CapabilityRegistry`]: src/capabilities/registry.rs
 [`IntentResolver`]: src/agent/mod.rs

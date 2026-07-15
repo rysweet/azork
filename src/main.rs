@@ -7,6 +7,7 @@
 use azork::agent::{IntentResolver, MockAdapter};
 use azork::az_runner::{AzRunner, FakeAzRunner, ProcessAzRunner};
 use azork::backend;
+use azork::capabilities::autodiscover::{self, DiscoveredGroup};
 use azork::capabilities::{registry::default_cache_path, CapabilityRegistry};
 use azork::dungeon::{cli as dungeon_cli, map as dungeon_map, playwright, render, server};
 use azork::memory::{default_memory_path, GraphMemory, MemoryKind};
@@ -15,6 +16,7 @@ use azork::update;
 use azork::world::{GrueOutcome, World};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
+use std::sync::mpsc::{self, Receiver};
 
 const BANNER: &str = r#"
     ___    ______           __
@@ -49,7 +51,7 @@ const HELP: &str = r#"Commands (Zork verbs -> Azure operations):
   cast deploy [template]  cast a deployment spell (bicep/ARM, mock)
   inventory / i           list resources you are carrying
   score                   report your governance posture (0-100)
-  learn <group>           introspect 'az <group> --help' and grow AzZork's powers
+  learn <group>           manually re-learn 'az <group> --help' (auto-discovered at startup too)
   capabilities / caps     list the az capabilities AzZork has learned
   recall <query>          ranked recall over AzZork's persistent memory
   friction <note>         record something confusing/missing to improve later
@@ -59,8 +61,9 @@ const HELP: &str = r#"Commands (Zork verbs -> Azure operations):
   quit / q                leave the dungeon
 
 Beware: acting in a dark (unmonitored) room invites a Grue to eat you.
-AzZork evolves: unknown input is resolved against what it has learned, and
-'learn <group>' teaches it new az verbs that persist across sessions."#;
+AzZork evolves automatically: it learns az command groups at startup without
+being asked, unknown input is resolved against everything it has learned, and
+'learn <group>' remains available to manually refresh a group on demand."#;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -174,12 +177,32 @@ fn main() {
     // Live derivation runs through the real `az` CLI at runtime.
     let runner = ProcessAzRunner::new();
 
+    // Kick off startup auto-discovery: learn whatever az groups aren't
+    // cached yet, without the player ever typing `learn`. This runs on a
+    // background thread that only *computes* results (never touches
+    // `registry`/`memory` itself) and streams them back over a channel, so
+    // the first prompt is never blocked on `az`. Set AZORK_AUTODISCOVER=0 to
+    // opt out entirely (e.g. offline/CI contexts).
+    let discovery_rx = spawn_startup_autodiscovery(registry.groups());
+    if discovery_rx.is_none() {
+        println!(
+            "[capabilities: auto-discovery disabled ({}=0)]\n",
+            autodiscover::AUTODISCOVER_ENV
+        );
+    }
+
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
 
     loop {
         if world.game_over {
             break;
+        }
+        // Fold in whatever the background discovery thread has streamed
+        // back since the last prompt — non-blocking, so a slow or hung `az`
+        // group never delays the player.
+        if let Some(rx) = &discovery_rx {
+            apply_discovered(rx, &mut registry, &mut memory, &cache_path);
         }
         print!("\naz> ");
         io::stdout().flush().ok();
@@ -224,6 +247,89 @@ fn main() {
 
     if world.game_over {
         println!("\n{}", world.score());
+    }
+}
+
+/// Kick off background startup auto-discovery, unless disabled via
+/// `AZORK_AUTODISCOVER=0`. Returns `None` when disabled (no `AzRunner` call
+/// is ever made in that case); otherwise spawns a thread that computes
+/// results only — it never touches `registry`/`memory` directly, since
+/// those are owned by the main thread — and streams them back so the
+/// caller can apply them without blocking the first prompt.
+fn spawn_startup_autodiscovery(known_groups: Vec<String>) -> Option<Receiver<DiscoveredGroup>> {
+    if !autodiscover::autodiscover_enabled() {
+        return None;
+    }
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let runner = ProcessAzRunner::new();
+        match autodiscover::discover_new_groups_given_known(&known_groups, &runner) {
+            Ok(missing) => {
+                for dg in autodiscover::learn_groups(&runner, &missing) {
+                    if tx.send(dg).is_err() {
+                        break; // Receiver gone (process exiting): stop early.
+                    }
+                }
+            }
+            Err(e) => {
+                // Sentinel with an empty group name signals "az is
+                // unavailable" to `apply_discovered`, which surfaces a
+                // friendly message rather than treating it as a group error.
+                let _ = tx.send(DiscoveredGroup {
+                    group: String::new(),
+                    result: Err(e),
+                });
+            }
+        }
+    });
+    Some(rx)
+}
+
+/// Drain whatever the background discovery thread has streamed so far and
+/// fold it into the registry/memory, persisting once if anything changed.
+/// Non-blocking: only ever consumes messages already sitting in the
+/// channel, so a slow or hung `az` call never delays the caller.
+fn apply_discovered(
+    rx: &Receiver<DiscoveredGroup>,
+    registry: &mut CapabilityRegistry,
+    memory: &mut GraphMemory,
+    cache_path: &Path,
+) {
+    let mut messages = autodiscover::drain_available(rx);
+    if messages.is_empty() {
+        return;
+    }
+    // Split out the "az unavailable" sentinel (empty group name) from real
+    // per-group results before handing the rest to `apply_learned`.
+    let mut az_unavailable = None;
+    messages.retain(|dg| {
+        if dg.group.is_empty() {
+            if let Err(e) = &dg.result {
+                az_unavailable = Some(e.clone());
+            }
+            false
+        } else {
+            true
+        }
+    });
+    if let Some(reason) = az_unavailable {
+        println!(
+            "\n[capabilities: auto-discovery unavailable ({}); using cached/built-in verbs]",
+            reason
+        );
+    }
+    if messages.is_empty() {
+        return;
+    }
+    let report = autodiscover::apply_learned(registry, memory, &messages);
+    if !report.newly_learned.is_empty() {
+        println!("\n{}", report.message());
+        if let Err(e) = registry.save(cache_path) {
+            eprintln!(
+                "[capabilities: warning — could not persist auto-discovered capabilities: {}]",
+                e
+            );
+        }
     }
 }
 
