@@ -28,7 +28,9 @@ boundaries are:
    the published checksum asset.
 5. **Persisted state** (graph memory, `src/memory/mod.rs` and the optional
    `memory-store/` crate, merged into `main`) — local storage; must never
-   contain credentials/tokens.
+   contain credentials/tokens. Free-text fields are not yet scrubbed before
+   write (Finding #9, low risk, tracked as
+   [issue #17](https://github.com/rysweet/azork/issues/17)).
 
 Full findings, severities, and status are tracked in
 [`docs/SECURITY-AUDIT.md`](docs/SECURITY-AUDIT.md).
