@@ -12,6 +12,74 @@ banish the Grues, and raise your governance score.
 
 > It is pitch black. You are likely to be eaten by a Grue.
 
+## Example session
+
+```
+    ___    ______           __
+   /   |  ____/ / __ \_____/ /__
+  / /| | /_  / / / / / ___/ //_/
+ / ___ |/ /_/ / /_/ / /  / ,<
+/_/  |_|\____/\____/_/  /_/|_|
+
+AzZork — an Azure Control-Plane Adventure
+=========================================
+[backend: mock (offline) | subscription: Contoso-Dev (mock)]
+
+== landing-rg (eastus) ==
+The West Landing Zone. Cables snake overhead and a subscription portal hums softly.
+You see:
+  - portal (Microsoft.Portal/dashboards)
+Exits: down, east, north
+
+az> north
+== web-rg (eastus) ==
+The Public Web Tier. Wind howls through open ports.
+You see:
+  - appservice (Microsoft.Web/sites)
+  - webstore (Microsoft.Storage/storageAccounts)
+Exits: north, south
+
+az> examine webstore
+webstore [Microsoft.Storage/storageAccounts]
+A storage account with its container door flung wide open.
+Status: PUBLIC | UNENCRYPTED | unlocked | ~$60/mo
+A Grue senses it is exposed to the public internet, storing its data unencrypted, ...
+
+az> lock webstore
+You ward the webstore with a management lock, private endpoints, and encryption. A Grue recoils.
+
+az> north
+== unmon-rg (centralus) ==
+It is pitch black here — no monitoring, no diagnostics. You are likely to be eaten by a Grue.
+Exits: south
+
+>> It is dark. You hear the slavering fangs of a Grue nearby. Enable monitoring (type 'monitor') before it strikes!
+
+az> monitor
+You enable diagnostic settings and Azure Monitor. Light floods the room; the lurking Grue shrieks and flees.
+
+az> score
+Governance posture: 50/100  —  rank: Apprentice Admin
+Outstanding hazards: 10 (public/unencrypted/unlocked resources, cost overruns, unmonitored rooms)
+Moves taken: 4
+```
+
+### Getting eaten by a Grue
+
+Linger in a dark (unmonitored) room and act turn after turn without enabling
+monitoring, and the Grue will eventually strike:
+
+```
+az> look
+
+>> It is dark. You hear the slavering fangs of a Grue nearby. ...
+az> look
+
+>> Oh no! You have walked too long in the dark. A GRUE lunges from the shadows and DEVOURS you.
+
+*** You have died. ***
+```
+
 ## The metaphor
 
 | Adventure concept        | Azure concept                                   |
@@ -338,74 +406,6 @@ az azork play --backend az
 The extension (`azext_azork`) is a thin Python shim that shells out to the
 compiled `azork` binary (found via `AZORK_BIN`, a bundled `bin/azork`, or `PATH`).
 See [`azext/README.md`](azext/README.md) for details.
-
-## Example session
-
-```
-    ___    ______           __
-   /   |  ____/ / __ \_____/ /__
-  / /| | /_  / / / / / ___/ //_/
- / ___ |/ /_/ / /_/ / /  / ,<
-/_/  |_|\____/\____/_/  /_/|_|
-
-AzZork — an Azure Control-Plane Adventure
-=========================================
-[backend: mock (offline) | subscription: Contoso-Dev (mock)]
-
-== landing-rg (eastus) ==
-The West Landing Zone. Cables snake overhead and a subscription portal hums softly.
-You see:
-  - portal (Microsoft.Portal/dashboards)
-Exits: down, east, north
-
-az> north
-== web-rg (eastus) ==
-The Public Web Tier. Wind howls through open ports.
-You see:
-  - appservice (Microsoft.Web/sites)
-  - webstore (Microsoft.Storage/storageAccounts)
-Exits: north, south
-
-az> examine webstore
-webstore [Microsoft.Storage/storageAccounts]
-A storage account with its container door flung wide open.
-Status: PUBLIC | UNENCRYPTED | unlocked | ~$60/mo
-A Grue senses it is exposed to the public internet, storing its data unencrypted, ...
-
-az> lock webstore
-You ward the webstore with a management lock, private endpoints, and encryption. A Grue recoils.
-
-az> north
-== unmon-rg (centralus) ==
-It is pitch black here — no monitoring, no diagnostics. You are likely to be eaten by a Grue.
-Exits: south
-
->> It is dark. You hear the slavering fangs of a Grue nearby. Enable monitoring (type 'monitor') before it strikes!
-
-az> monitor
-You enable diagnostic settings and Azure Monitor. Light floods the room; the lurking Grue shrieks and flees.
-
-az> score
-Governance posture: 50/100  —  rank: Apprentice Admin
-Outstanding hazards: 10 (public/unencrypted/unlocked resources, cost overruns, unmonitored rooms)
-Moves taken: 4
-```
-
-### Getting eaten by a Grue
-
-Linger in a dark (unmonitored) room and act turn after turn without enabling
-monitoring, and the Grue will eventually strike:
-
-```
-az> look
-
->> It is dark. You hear the slavering fangs of a Grue nearby. ...
-az> look
-
->> Oh no! You have walked too long in the dark. A GRUE lunges from the shadows and DEVOURS you.
-
-*** You have died. ***
-```
 
 ## Development
 
