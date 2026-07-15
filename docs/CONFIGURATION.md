@@ -127,14 +127,24 @@ primarily a mock-world feature.
 | Variable | Values | Default | Effect |
 | --- | --- | --- | --- |
 | `AZORK_BACKEND` | `mock`, `az`, `real`, `azure` | `mock` | Selects the backend when no `--backend` flag is given. |
+| `AZORK_CACHE_DIR` | any writable directory | see below | Directory for the learned-capability cache (`capabilities.tsv`). |
 
 ## Persistence
 
-None. AzZork has:
+AzZork keeps **no** configuration file, no world save/restore, and no
+serialization of the *game state* — every session starts fresh from the selected
+backend, and world changes are lost on exit. This keeps the destructive verbs
+safe.
 
-- no configuration file,
-- no save/restore,
-- no serialization to disk.
+The one thing that *does* persist is AzZork's **learned vocabulary**. Running
+`learn <group>` introspects `az <group> --help` and writes the discovered
+capabilities to a small tab-separated cache file, which is recalled on the next
+launch so the game accumulates knowledge over time. The cache location is:
 
-Every session starts fresh from the selected backend, and all changes are lost
-on exit. This keeps the destructive verbs safe and the tool dependency-free.
+1. `$AZORK_CACHE_DIR/capabilities.tsv` if `AZORK_CACHE_DIR` is set;
+2. else `$XDG_DATA_HOME/azork/capabilities.tsv`;
+3. else `~/.local/share/azork/capabilities.tsv`.
+
+The cache holds only public `az` command names and their one-line help summaries
+— no credentials, subscription data, or resource contents. Delete the file to
+reset AzZork's learned capabilities.

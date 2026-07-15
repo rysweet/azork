@@ -14,20 +14,35 @@ src/
 ├── main.rs            REPL: banner, input loop, dispatch, y/N confirmation
 ├── parser.rs          Total input parser: text -> Command
 ├── world.rs           World model: rooms, resources, hazards, Grue, scoring
+├── az_runner.rs       AzRunner seam: the one place `az` is invoked
+├── capabilities/      Dynamic capability derivation + persistent registry
+│   ├── mod.rs         Capability type
+│   ├── derive.rs      Parse `az [<group>] --help` into capabilities
+│   └── registry.rs    CapabilityRegistry: lookup, suggest, help_text, cache I/O
+├── agent/
+│   └── mod.rs         IntentResolver + Adapter trait + offline MockAdapter
 └── backend/
     ├── mod.rs         Backend trait + select()
     ├── mock.rs        Default offline synthetic world
-    └── az.rs          Optional read-only live-Azure world (shells out to `az`)
+    └── az.rs          Optional read-only live-Azure world (driven via AzRunner)
 ```
 
 Data flows one way at startup: a `Backend` **builds** a `World`; thereafter the
-REPL parses input into `Command`s and applies them to the `World`.
+REPL parses input into `Command`s and applies them to the `World`. Unknown input
+is routed to the `agent::IntentResolver`, which consults the
+`capabilities::CapabilityRegistry` (grown at runtime via `learn`).
 
 ```
 input ──parser::parse──▶ Command ──main::handle──▶ World mutation ──▶ text out
-                                                     │
-Backend::build_world ────────────────────────────────┘ (once, at startup)
+                                     │                    ▲
+                                     ├─ Unknown ─▶ IntentResolver ─┘
+                                     └─ Learn ──▶ CapabilityRegistry ◀─ AzRunner ◀─ `az --help`
+Backend::build_world ────────────────────────────────────────────────┘ (once, at startup)
 ```
+
+All `az` access — both the live `AzBackend` and capability derivation — passes
+through the `AzRunner` trait, so tests inject a `FakeAzRunner` and never touch
+the real CLI or network.
 
 ## `parser` module
 
@@ -64,10 +79,12 @@ The full set of parsed commands. Derives `Debug, Clone, PartialEq, Eq`.
 | `Inventory` | List carried resources. |
 | `Score` | Report governance posture. |
 | `Cast(String)` | Cast a spell (currently `deploy [template]`). |
-| `Help` | Show help. |
+| `Learn(String)` | Introspect `az <group> --help` and grow the capability registry. |
+| `Capabilities` | List the `az` capabilities learned so far. |
+| `Help` | Show help (built-in verbs plus learned capabilities). |
 | `Quit` | Leave the game. |
 | `Empty` | Player entered nothing. |
-| `Unknown(String)` | Unrecognized input; carries the original text. |
+| `Unknown(String)` | Unrecognized input; routed to the `IntentResolver` rather than rejected. |
 
 ### `fn parse`
 
@@ -207,10 +224,51 @@ Builds the fixed offline world (see
 
 ### `struct AzBackend`
 
-Builds a world from the live subscription via read-only `az` calls.
+Builds a world from the live subscription via read-only `az` calls, all routed
+through an injected `AzRunner` (`AzBackend::new()` uses `ProcessAzRunner`;
+`AzBackend::with_runner(..)` accepts any runner, e.g. `FakeAzRunner` in tests).
 `name()` → `"az (live Azure)"`. See
 [the `az` backend](CONFIGURATION.md#the-az-backend-live-azure) for the exact
 commands and safety guarantees.
+
+## `az_runner` module
+
+The single seam through which AzZork ever invokes the `az` CLI.
+
+```rust
+pub trait AzRunner {
+    fn run(&self, args: &[&str]) -> std::io::Result<std::process::Output>;
+}
+```
+
+- **`ProcessAzRunner`** — production impl; shells out to `az` on `PATH`.
+- **`FakeAzRunner`** — test impl; returns canned `(stdout, success)` keyed by the
+  exact argument vector (`.with(...)` / `.with_failure(...)`).
+
+## `capabilities` module
+
+Dynamic derivation and persistence of AzZork's runtime vocabulary.
+
+- **`struct Capability`** — `{ group, verb, summary, command_path, status }`;
+  helpers `key()`, `az_args()`, `help_line()`.
+- **`derive::derive_groups` / `derive::derive_group_capabilities`** — parse
+  `az --help` / `az <group> --help` (folds wrapped summaries, extracts
+  `[Preview]`-style status tags).
+- **`registry::CapabilityRegistry`** — `learn_group`, `get`, `find_by_verb`,
+  `suggest`, `groups`, `help_text`, and dependency-free `load`/`save` to a
+  tab-separated cache (`default_cache_path()` honours `AZORK_CACHE_DIR` /
+  `XDG_DATA_HOME`).
+
+## `agent` module
+
+Agentic resolution of unknown/ambiguous intent — AzZork never dead-ends.
+
+- **`trait Adapter`** — `resolve(&self, input, &CapabilityRegistry) -> Resolution`.
+- **`struct MockAdapter`** — deterministic, offline adapter that ranks learned
+  capabilities against the input.
+- **`enum Resolution`** — `Verb` | `Suggestions` | `Unresolved`, each with
+  `narrate()`.
+- **`IntentResolver<A: Adapter>`** — ties an adapter to a registry; never fails.
 
 ## `main` (REPL)
 
@@ -223,10 +281,12 @@ Entry point and orchestration. Responsibilities:
 - Prompt for **y/N** confirmation on `take` and `drop` (default No).
 - Implement the `cast deploy [template]` spell as a mock, credential-free
   deployment narration.
+- Handle `learn`/`capabilities`, append learned capabilities to `help`, and route
+  `Unknown` input through the `IntentResolver` (never a hard failure).
 
 ## Testing
 
-The suite has **108 tests**: unit tests colocated with each module under
+The suite has **141 tests**: unit tests colocated with each module under
 `#[cfg(test)]`, plus external contract/integration tests in `tests/` that drive
 the public API of the `azork` library crate.
 
@@ -253,11 +313,15 @@ External test files (in `tests/`, exercising the public contract):
   winnable playthrough, and credential-free `az` backend construction.
 - **`integration_tests.rs`** — end-to-end sessions parsing raw input and
   dispatching commands against a live world.
+- **`evolution_tests.rs`** — self-evolution: deriving a brand-new capability with
+  no code edit, persistence/recall across sessions, non-failing intent
+  resolution, and driving `AzBackend` from a `FakeAzRunner` — all offline.
 
-No test invokes the `az` backend's `build_world`, so the suite runs with zero
+No test invokes the real `az` CLI (everything goes through `FakeAzRunner`) or the
+`az` backend against a live subscription, so the suite runs with zero
 credentials.
 
 ```bash
 cargo build      # compiles cleanly, no warnings
-cargo test       # 108 tests, all passing
+cargo test       # 141 tests, all passing
 ```

@@ -73,6 +73,10 @@ pub enum Command {
     Score,
     /// Cast a "spell": currently `deploy` (bicep/ARM deployment).
     Cast(String),
+    /// Teach AzZork a new az command group by introspecting `az <group> --help`.
+    Learn(String),
+    /// List the az capabilities AzZork has learned so far.
+    Capabilities,
     /// Show help.
     Help,
     /// Leave the game.
@@ -168,6 +172,14 @@ pub fn parse(input: &str) -> Command {
         }
         // Allow "deploy ..." as a convenience alias for "cast deploy".
         "deploy" => Command::Cast(format!("deploy {}", arg).trim().to_string()),
+        "learn" | "discover" | "study" => {
+            if arg.is_empty() {
+                Command::Unknown(input.to_string())
+            } else {
+                Command::Learn(arg)
+            }
+        }
+        "capabilities" | "caps" | "powers" | "spells" => Command::Capabilities,
         "help" | "?" | "h" => Command::Help,
         "quit" | "q" | "exit" => Command::Quit,
         _ => Command::Unknown(input.to_string()),
@@ -296,6 +308,22 @@ mod tests {
             Command::Cast("deploy webapp.bicep".to_string())
         );
         assert_eq!(parse("deploy"), Command::Cast("deploy".to_string()));
+    }
+
+    #[test]
+    fn learn_and_capabilities() {
+        assert_eq!(
+            parse("learn storage"),
+            Command::Learn("storage".to_string())
+        );
+        assert_eq!(
+            parse("discover the network"),
+            Command::Learn("network".to_string())
+        );
+        assert!(matches!(parse("learn"), Command::Unknown(_)));
+        assert_eq!(parse("capabilities"), Command::Capabilities);
+        assert_eq!(parse("caps"), Command::Capabilities);
+        assert_eq!(parse("powers"), Command::Capabilities);
     }
 
     #[test]

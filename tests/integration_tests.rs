@@ -28,6 +28,8 @@ fn dispatch(world: &mut World, line: &str) -> String {
         Command::Inventory => world.inventory(),
         Command::Score => world.score(),
         Command::Cast(_) => "cast (mock)".to_string(),
+        Command::Learn(g) => format!("learn: {g}"),
+        Command::Capabilities => "capabilities".to_string(),
         Command::Help => "help".to_string(),
         Command::Quit => "quit".to_string(),
         Command::Unknown(raw) => format!("unknown: {raw}"),

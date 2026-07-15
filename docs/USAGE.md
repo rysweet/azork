@@ -63,7 +63,9 @@ Pressing Ctrl-D (EOF) at any prompt ends the session gracefully.
 | `cast deploy [template]` | `deploy [template]` | Cast a deployment spell (mock bicep/ARM). | `az deployment group create` |
 | `inventory` | `i`, `inv` | List the resources you are carrying. | — |
 | `score` | — | Report your governance posture (0–100) and rank. | Governance posture |
-| `help` | `?`, `h` | Show the in-game command list. | — |
+| `learn <group>` | `discover`, `study` | Introspect `az <group> --help` and grow AzZork's vocabulary at runtime; learned verbs persist across sessions. | `az <group> --help` |
+| `capabilities` | `caps`, `powers`, `spells` | List the `az` capabilities AzZork has learned so far. | — |
+| `help` | `?`, `h` | Show the in-game command list (including learned capabilities). | — |
 | `quit` | `q`, `exit` | Leave the dungeon (prints your final score). | — |
 
 Unrecognized input returns a friendly hint rather than crashing:
@@ -240,3 +242,36 @@ perfect **100/100 — Cloud Guardian**.
 > spend, so only `resize` clears it. In the default mock estate the `sqlserver`
 > ($800/mo) is the one resource that needs right-sizing as well as locking; do
 > both and a perfect 100/100 run is achievable.
+
+## Self-evolution: `learn` and `capabilities`
+
+AzZork's verb set is not frozen. It **derives** capabilities from the real `az`
+CLI and remembers them across sessions.
+
+```text
+az> learn group
+You study the 'group' grimoire. AzZork learns 8 new az power(s); 8 known in
+total. (remembered in ~/.local/share/azork/capabilities.tsv)
+
+az> capabilities
+AzZork has learned 8 az capabilities across 1 groups:
+Discovered az capabilities (learned at runtime):
+ [group]
+  create         az group create — Create a new resource group.
+  list           az group list — List resource groups.
+  ...
+```
+
+- **`learn <group>`** shells out to `az <group> --help`, parses the command list,
+  and folds each discovered command into AzZork's capability registry as a new
+  verb — **no code change required**. This needs the real `az` CLI on `PATH`; if
+  it is missing, `learn` reports the problem instead of failing hard.
+- **Persistence.** Learned capabilities are written to a small cache file and
+  **recalled automatically on the next launch**. The default location is
+  `~/.local/share/azork/capabilities.tsv` (honouring `XDG_DATA_HOME`); set
+  `AZORK_CACHE_DIR` to override it.
+- **Adaptive help.** `help` appends everything learned so far, grouped by `az`
+  command group. `capabilities` (aliases `caps`, `powers`, `spells`) lists them.
+- **Intent resolution.** Any input that matches no built-in verb is not rejected
+  outright: AzZork ranks your words against its learned capabilities and either
+  acts on a confident match or offers a "did you mean…" list.

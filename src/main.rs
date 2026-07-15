@@ -4,10 +4,14 @@
 //! required). Pass `--backend az` (or set `AZORK_BACKEND=az`) to explore your
 //! real subscription via the `az` CLI.
 
+use azork::agent::{IntentResolver, MockAdapter};
+use azork::az_runner::{AzRunner, ProcessAzRunner};
 use azork::backend;
+use azork::capabilities::{registry::default_cache_path, CapabilityRegistry};
 use azork::parser::{self, Command};
 use azork::world::{GrueOutcome, World};
 use std::io::{self, BufRead, Write};
+use std::path::Path;
 
 const BANNER: &str = r#"
     ___    ______           __
@@ -42,10 +46,14 @@ const HELP: &str = r#"Commands (Zork verbs -> Azure operations):
   cast deploy [template]  cast a deployment spell (bicep/ARM, mock)
   inventory / i           list resources you are carrying
   score                   report your governance posture (0-100)
+  learn <group>           introspect 'az <group> --help' and grow AzZork's powers
+  capabilities / caps     list the az capabilities AzZork has learned
   help / ?                show this help
   quit / q                leave the dungeon
 
-Beware: acting in a dark (unmonitored) room invites a Grue to eat you."#;
+Beware: acting in a dark (unmonitored) room invites a Grue to eat you.
+AzZork evolves: unknown input is resolved against what it has learned, and
+'learn <group>' teaches it new az verbs that persist across sessions."#;
 
 fn main() {
     let requested_backend = resolve_backend_id();
@@ -82,6 +90,19 @@ fn main() {
     );
     println!("{}\n", world.look());
 
+    // AzZork's learned vocabulary, persisted across sessions.
+    let cache_path = default_cache_path();
+    let mut registry = CapabilityRegistry::load(&cache_path);
+    if !registry.is_empty() {
+        println!(
+            "[memory: recalled {} learned az capabilities from {}]\n",
+            registry.len(),
+            cache_path.display()
+        );
+    }
+    // Live derivation runs through the real `az` CLI at runtime.
+    let runner = ProcessAzRunner::new();
+
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
 
@@ -101,7 +122,14 @@ fn main() {
         };
 
         let cmd = parser::parse(&line);
-        let quit = handle(&mut world, cmd, &mut lines);
+        let quit = handle(
+            &mut world,
+            cmd,
+            &mut lines,
+            &mut registry,
+            &runner,
+            &cache_path,
+        );
         if quit {
             break;
         }
@@ -141,7 +169,14 @@ fn resolve_backend_id() -> Option<String> {
 }
 
 /// Handle a single command. Returns `true` if the player asked to quit.
-fn handle<I>(world: &mut World, cmd: Command, lines: &mut I) -> bool
+fn handle<I>(
+    world: &mut World,
+    cmd: Command,
+    lines: &mut I,
+    registry: &mut CapabilityRegistry,
+    runner: &dyn AzRunner,
+    cache_path: &Path,
+) -> bool
 where
     I: Iterator<Item = io::Result<String>>,
 {
@@ -177,19 +212,78 @@ where
         Command::Inventory => println!("{}", world.inventory()),
         Command::Score => println!("{}", world.score()),
         Command::Cast(spell) => println!("{}", cast(world, &spell)),
-        Command::Help => println!("{}", HELP),
+        Command::Learn(group) => println!("{}", learn(registry, runner, cache_path, &group)),
+        Command::Capabilities => println!("{}", capabilities_report(registry)),
+        Command::Help => println!("{}", help_text(registry)),
         Command::Quit => {
             println!("\nYou step back through the portal.\n{}", world.score());
             return true;
         }
         Command::Unknown(raw) => {
-            println!(
-                "I don't understand \"{}\". Type 'help' for commands.",
-                raw.trim()
-            );
+            // Never hard-fail: try to resolve intent against learned capabilities.
+            let resolver = IntentResolver::new(MockAdapter::new(), registry);
+            println!("{}", resolver.resolve(&raw).narrate());
         }
     }
     false
+}
+
+/// The full help text: static core verbs plus any learned capabilities.
+fn help_text(registry: &CapabilityRegistry) -> String {
+    let learned = registry.help_text();
+    if learned.is_empty() {
+        HELP.to_string()
+    } else {
+        format!("{}\n\n{}", HELP, learned)
+    }
+}
+
+/// Report what AzZork has learned so far.
+fn capabilities_report(registry: &CapabilityRegistry) -> String {
+    if registry.is_empty() {
+        "AzZork has learned no az capabilities yet. Try 'learn group' or \
+         'learn storage' to teach it (requires the real 'az' CLI)."
+            .to_string()
+    } else {
+        format!(
+            "AzZork has learned {} az capabilities across {} groups:\n{}",
+            registry.len(),
+            registry.groups().len(),
+            registry.help_text()
+        )
+    }
+}
+
+/// Introspect `az <group> --help`, fold new capabilities into the registry, and
+/// persist them so the knowledge survives to future sessions.
+fn learn(
+    registry: &mut CapabilityRegistry,
+    runner: &dyn AzRunner,
+    cache_path: &Path,
+    group: &str,
+) -> String {
+    let group = group.split_whitespace().next().unwrap_or(group);
+    match registry.learn_group(runner, group) {
+        Ok(added) => {
+            let save_note = match registry.save(cache_path) {
+                Ok(()) => format!("(remembered in {})", cache_path.display()),
+                Err(e) => format!("(warning: could not persist: {})", e),
+            };
+            format!(
+                "You study the '{}' grimoire. AzZork learns {} new az power(s); \
+                 {} known in total. {}",
+                group,
+                added,
+                registry.len(),
+                save_note
+            )
+        }
+        Err(e) => format!(
+            "You pore over the '{}' tomes but find nothing usable: {}. \
+             (Is the real 'az' CLI installed and on PATH?)",
+            group, e
+        ),
+    }
 }
 
 /// Cast a spell. Currently only `deploy` (a mock bicep/ARM deployment).

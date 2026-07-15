@@ -8,10 +8,10 @@
 //! (`-o tsv`) with narrow `--query` projections and parse the plain text.
 
 use super::Backend;
+use crate::az_runner::{AzRunner, ProcessAzRunner};
 use crate::parser::Direction;
 use crate::world::{Resource, Room, World};
 use std::io::ErrorKind;
-use std::process::Command;
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -21,11 +21,22 @@ const MAX_ATTEMPTS: u32 = 3;
 const BASE_BACKOFF: Duration = Duration::from_millis(400);
 
 /// Backend that queries the real Azure control plane via `az`.
-pub struct AzBackend;
+///
+/// All CLI invocation goes through an injected [`AzRunner`], so tests can drive
+/// this backend with canned output instead of the real `az` binary.
+pub struct AzBackend {
+    runner: Box<dyn AzRunner>,
+}
 
 impl AzBackend {
+    /// Construct a backend that shells out to the real `az` CLI.
     pub fn new() -> AzBackend {
-        AzBackend
+        AzBackend::with_runner(Box::new(ProcessAzRunner::new()))
+    }
+
+    /// Construct a backend over an arbitrary [`AzRunner`] (used by tests).
+    pub fn with_runner(runner: Box<dyn AzRunner>) -> AzBackend {
+        AzBackend { runner }
     }
 
     /// Run an `az` invocation with bounded retries and exponential backoff.
@@ -54,7 +65,7 @@ impl AzBackend {
 
     /// Perform a single `az` invocation. Returns `(message, retryable)` on error.
     fn run_once(&self, args: &[&str]) -> Result<String, (String, bool)> {
-        let output = Command::new("az").args(args).output().map_err(|e| {
+        let output = self.runner.run(args).map_err(|e| {
             // A missing binary is never transient; other spawn errors might be.
             let retryable = e.kind() != ErrorKind::NotFound;
             (

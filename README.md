@@ -44,9 +44,40 @@ monitor / light         enable monitoring here (banish the Grue)
 cast deploy [template]  cast a deployment spell (bicep/ARM, mock)
 inventory / i           list resources you are carrying
 score                   report your governance posture (0-100)
+learn <group>           introspect 'az <group> --help' and grow AzZork at runtime
+capabilities / caps     list the az capabilities AzZork has learned so far
 help / ?                show this help
 quit / q                leave the dungeon
 ```
+
+## Self-evolution 🌱
+
+AzZork does **not** ship a frozen, hand-maintained table of `az` commands.
+Instead it *derives* its vocabulary from the real CLI and grows as you play:
+
+- **`learn <group>`** runs `az <group> --help`, parses the command list, and folds
+  every discovered command into AzZork's [`CapabilityRegistry`] as a new verb.
+  No code edit is needed for AzZork to understand a new `az` command — it is
+  learned, not compiled in.
+- **Persistence.** Learned capabilities are cached (default
+  `~/.local/share/azork/capabilities.tsv`, override with `AZORK_CACHE_DIR`) and
+  **recalled on the next launch**, so AzZork accumulates knowledge across
+  sessions.
+- **Adaptive help.** `help` and `capabilities` surface everything learned so far,
+  grouped by `az` command group.
+- **Intent resolution, never a dead end.** Input that matches no built-in verb is
+  routed through an agentic [`IntentResolver`]. Its default, fully-offline
+  `MockAdapter` ranks your words against learned capabilities and answers with a
+  confident match or a "did you mean…" list — AzZork *tries to figure out what
+  you meant* rather than failing. The `Adapter` trait is the seam where a richer,
+  live agentic resolver (recipe-runner style) can be slotted in.
+
+All CLI access flows through a single `AzRunner` seam, so the entire
+self-evolution machinery is exercised offline in tests with canned `az` output —
+`cargo test` never calls the real `az` binary or the network.
+
+[`CapabilityRegistry`]: src/capabilities/registry.rs
+[`IntentResolver`]: src/agent/mod.rs
 
 ## Install
 
@@ -172,26 +203,46 @@ Idiomatic Rust modules:
 ```
 src/
 ├── main.rs            binary: REPL, intro banner, backend selection, confirmations, Grue turns
-├── lib.rs             library crate root re-exporting parser, world, backend
+├── lib.rs             library crate root re-exporting parser, world, backend, az_runner, capabilities, agent
 ├── parser.rs          command parser: verbs, directions, aliases (+ unit tests)
 ├── world.rs           world model: rooms, resources, hazards, scoring, Grue mechanic (+ unit tests)
+├── az_runner.rs       the single seam for invoking `az` (ProcessAzRunner / FakeAzRunner)
+├── capabilities/
+│   ├── mod.rs         Capability type
+│   ├── derive.rs      parse `az --help` / `az <group> --help` into capabilities
+│   └── registry.rs    CapabilityRegistry: lookup, suggestions, help text, on-disk cache
+├── agent/
+│   └── mod.rs         IntentResolver + Adapter trait + offline MockAdapter
 └── backend/
     ├── mod.rs         Backend trait + selection
     ├── mock.rs        default offline synthetic estate (+ unit tests)
-    └── az.rs          optional live backend shelling out to `az`
+    └── az.rs          optional live backend, driven through an injected AzRunner
 
 tests/                 external contract & integration tests (drive the public API)
 ├── parser_tests.rs    parser verb/alias/edge-case contract
 ├── world_tests.rs     world-model behaviour & edge cases
 ├── backend_tests.rs   backend selection + mock estate invariants
-└── integration_tests.rs  end-to-end typed-session workflows
+├── integration_tests.rs  end-to-end typed-session workflows
+└── evolution_tests.rs    self-evolution: derive/persist/resolve with a fake `az`
 ```
 
 The engine is split into a thin `azork` binary and an `azork` library crate.
 The `Backend` trait cleanly separates *where the map comes from* (mock vs. live
 Azure) from the game engine, so the world model and parser are fully testable
-without any Azure dependency — from both colocated unit tests and the external
-`tests/` suite.
+without any Azure dependency. All `az` invocation is funnelled through the
+`AzRunner` seam, letting the capability-derivation and intent-resolution paths be
+exercised offline with canned CLI output — from both colocated unit tests and the
+external `tests/` suite.
+
+### Third-party dependencies
+
+The crate remains **dependency-free** (standard library only), so nothing new
+needs a license note. The self-evolution design anticipates optional, feature-
+gated integration with the MIT-licensed `amplihack-memory` (ladybug graph memory)
+and `amplihack-recipe-runner` (agentic `Adapter`) crates; those would be added
+behind a `persistent` feature so the default build stays light and offline. Their
+MIT terms are compatible with this project's MIT license.
+
 
 ## Development
 
