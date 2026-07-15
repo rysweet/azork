@@ -30,28 +30,10 @@ const REDACTED: &str = "***REDACTED***";
 ///   colon/equals, which covers client secrets and PATs that don't match a
 ///   more specific pattern above.
 pub fn scrub(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for line in split_keep_newlines(text) {
-        out.push_str(&scrub_line(line));
-    }
-    out
-}
-
-/// Split `text` into segments each retaining their trailing newline, so
-/// scrubbing is line-oriented without losing the original line structure.
-fn split_keep_newlines(text: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut start = 0;
-    for (i, b) in text.bytes().enumerate() {
-        if b == b'\n' {
-            out.push(&text[start..=i]);
-            start = i + 1;
-        }
-    }
-    if start < text.len() {
-        out.push(&text[start..]);
-    }
-    out
+    let mut result = redact_key_value_pairs(text);
+    result = redact_bearer_tokens(&result);
+    result = redact_jwt_like(&result);
+    result
 }
 
 /// Secret-bearing key names we recognise regardless of separator (`=` or `:`)
@@ -78,13 +60,6 @@ const SECRET_KEYS: &[&str] = &[
     "api_key",
     "sig",
 ];
-
-fn scrub_line(line: &str) -> String {
-    let mut result = redact_key_value_pairs(line);
-    result = redact_bearer_tokens(&result);
-    result = redact_jwt_like(&result);
-    result
-}
 
 /// Redact `key=value` pairs (as found in connection strings and query
 /// strings, joined by `;`/`&`) and `key: value` pairs (as found in plain
