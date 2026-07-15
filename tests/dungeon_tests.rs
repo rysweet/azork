@@ -1224,3 +1224,310 @@ fn fixture_runner_never_answers_a_write_verb() {
         .unwrap();
     assert!(!out.status.success());
 }
+
+// ---------------------------------------------------------------------------
+// Parallel enumeration: determinism, AIMD throttle recovery, backpressure,
+// and cancellation under the worker-pool implementation of
+// `build_cancellable` (see src/dungeon/concurrency.rs).
+// ---------------------------------------------------------------------------
+
+/// Build synthetic `az group list` JSON for `n` resource groups, all in the
+/// same region so ordering differences would also show up in edge output.
+fn many_groups_json(n: usize) -> String {
+    let entries: Vec<String> = (0..n)
+        .map(|i| {
+            format!(
+                r#"{{"id":"/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-{i:03}","location":"eastus","name":"rg-{i:03}","properties":{{"provisioningState":"Succeeded"}},"tags":null,"type":"Microsoft.Resources/resourceGroups"}}"#
+            )
+        })
+        .collect();
+    format!("[{}]", entries.join(","))
+}
+
+/// Synthesize an `std::process::ExitStatus` without spawning a process
+/// (mirrors the private helper in `src/az_runner.rs`; duplicated here since
+/// it isn't part of the crate's public test surface).
+fn test_exit_status(success: bool) -> std::process::ExitStatus {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(if success { 0 } else { 1 << 8 })
+    }
+    #[cfg(not(unix))]
+    {
+        let program = if success { "true" } else { "false" };
+        std::process::Command::new(program)
+            .status()
+            .unwrap_or_else(|_| panic!("could not synthesise ExitStatus via '{}'", program))
+    }
+}
+
+fn test_output(stdout: &str, stderr: &str, success: bool) -> std::process::Output {
+    std::process::Output {
+        status: test_exit_status(success),
+        stdout: stdout.as_bytes().to_vec(),
+        stderr: stderr.as_bytes().to_vec(),
+    }
+}
+
+/// A runner that: answers `group list` with a large canned group set,
+/// counts every `resource list` invocation (total and concurrent-in-flight),
+/// and makes each `resource list` call for `rg-000` fail with a throttling
+/// (429) signal on its first attempt before succeeding on every subsequent
+/// attempt — so tests can assert the AIMD retry path actually recovers.
+struct ThrottleAwareCountingRunner {
+    group_list_json: String,
+    attempts_for_rg_000: std::sync::Mutex<u32>,
+    total_resource_calls: std::sync::atomic::AtomicUsize,
+    in_flight: std::sync::atomic::AtomicUsize,
+    max_in_flight_seen: std::sync::atomic::AtomicUsize,
+    /// Small artificial per-call delay so overlapping worker threads have a
+    /// real chance to race, making determinism/backpressure assertions
+    /// meaningful rather than trivially true from instant sequential calls.
+    per_call_delay: std::time::Duration,
+}
+
+impl ThrottleAwareCountingRunner {
+    fn new(n_groups: usize, per_call_delay: std::time::Duration) -> Self {
+        ThrottleAwareCountingRunner {
+            group_list_json: many_groups_json(n_groups),
+            attempts_for_rg_000: std::sync::Mutex::new(0),
+            total_resource_calls: std::sync::atomic::AtomicUsize::new(0),
+            in_flight: std::sync::atomic::AtomicUsize::new(0),
+            max_in_flight_seen: std::sync::atomic::AtomicUsize::new(0),
+            per_call_delay,
+        }
+    }
+}
+
+impl AzRunner for ThrottleAwareCountingRunner {
+    fn run(&self, args: &[&str]) -> std::io::Result<std::process::Output> {
+        use std::sync::atomic::Ordering;
+
+        if args == GROUP_LIST_ARGS {
+            return Ok(test_output(&self.group_list_json, "", true));
+        }
+
+        // Every other call is treated as a `resource list` invocation.
+        let now_in_flight = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        self.max_in_flight_seen
+            .fetch_max(now_in_flight, Ordering::SeqCst);
+        self.total_resource_calls.fetch_add(1, Ordering::SeqCst);
+        std::thread::sleep(self.per_call_delay);
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
+
+        if args.contains(&"rg-000") {
+            let mut attempts = self.attempts_for_rg_000.lock().unwrap();
+            *attempts += 1;
+            if *attempts == 1 {
+                return Ok(test_output(
+                    "",
+                    "Error: (429) Too Many Requests. Retry-After: 0",
+                    false,
+                ));
+            }
+        }
+
+        Ok(test_output("[]", "", true))
+    }
+}
+
+#[test]
+fn build_cancellable_is_deterministic_across_repeated_parallel_runs() {
+    let runner = ThrottleAwareCountingRunner::new(24, std::time::Duration::from_millis(2));
+    let cancel = map::CancelToken::new();
+
+    let first = map::build_cancellable(&runner, map::DEFAULT_BUDGET, &cancel)
+        .expect("build should succeed");
+    let second = map::build_cancellable(&runner, map::DEFAULT_BUDGET, &cancel)
+        .expect("build should succeed");
+
+    let first_ids: Vec<&str> = first.rooms.iter().map(|r| r.id.as_str()).collect();
+    let second_ids: Vec<&str> = second.rooms.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        first_ids, second_ids,
+        "room order must be identical across repeated parallel builds, \
+         regardless of which worker thread finished which group first"
+    );
+    // Sorted ascending by construction (rg-000..rg-023), not just "some
+    // stable order" — confirms the pre-sized-by-index write preserves the
+    // original `az group list` order exactly.
+    let mut sorted = first_ids.clone();
+    sorted.sort();
+    assert_eq!(first_ids, sorted);
+}
+
+#[test]
+fn build_cancellable_recovers_from_a_throttled_resource_list_call() {
+    let runner = ThrottleAwareCountingRunner::new(6, std::time::Duration::from_millis(1));
+    let cancel = map::CancelToken::new();
+
+    let dmap = map::build_cancellable(&runner, map::DEFAULT_BUDGET, &cancel)
+        .expect("a throttled-then-successful call must not fail the whole build");
+
+    assert!(
+        dmap.room("rg-000").is_some(),
+        "the throttled room must still appear in the final map"
+    );
+    assert_eq!(
+        *runner.attempts_for_rg_000.lock().unwrap(),
+        2,
+        "the throttled call must have been retried exactly once and then succeeded"
+    );
+    assert!(
+        !dmap.partial,
+        "a full, non-cancelled build must not be partial"
+    );
+}
+
+#[test]
+fn build_cancellable_never_exceeds_available_parallelism_concurrently() {
+    let runner = ThrottleAwareCountingRunner::new(16, std::time::Duration::from_millis(3));
+    let cancel = map::CancelToken::new();
+
+    map::build_cancellable(&runner, map::DEFAULT_BUDGET, &cancel).expect("build should succeed");
+
+    let host_parallelism = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let observed = runner
+        .max_in_flight_seen
+        .load(std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        observed <= host_parallelism,
+        "observed {observed} concurrent `resource list` calls but the host only reports \
+         {host_parallelism} available threads of parallelism"
+    );
+}
+
+/// A runner whose first `resource list` call blocks (signaling readiness via
+/// `reached_first_call`) until explicitly released, so a test can pause
+/// enumeration deterministically at "exactly one call has started" without
+/// racing against thread-scheduling timing. Every call is counted.
+struct BlockingFirstCallRunner {
+    group_list_json: String,
+    reached_first_call: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    released: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    total_resource_calls: std::sync::atomic::AtomicUsize,
+}
+
+impl BlockingFirstCallRunner {
+    fn new(n_groups: usize) -> Self {
+        BlockingFirstCallRunner {
+            group_list_json: many_groups_json(n_groups),
+            reached_first_call: std::sync::Arc::new((
+                std::sync::Mutex::new(false),
+                std::sync::Condvar::new(),
+            )),
+            released: std::sync::Arc::new((
+                std::sync::Mutex::new(false),
+                std::sync::Condvar::new(),
+            )),
+            total_resource_calls: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// Block the calling (test) thread until the first `resource list` call
+    /// has actually started inside the runner.
+    fn wait_for_first_call(&self) {
+        let (lock, cvar) = &*self.reached_first_call;
+        let mut reached = lock.lock().unwrap();
+        while !*reached {
+            reached = cvar.wait(reached).unwrap();
+        }
+    }
+
+    /// Release the first (and any other already-blocked) `resource list`
+    /// call(s) to proceed.
+    fn release(&self) {
+        let (lock, cvar) = &*self.released;
+        *lock.lock().unwrap() = true;
+        cvar.notify_all();
+    }
+}
+
+impl AzRunner for BlockingFirstCallRunner {
+    fn run(&self, args: &[&str]) -> std::io::Result<std::process::Output> {
+        if args == GROUP_LIST_ARGS {
+            return Ok(test_output(&self.group_list_json, "", true));
+        }
+
+        self.total_resource_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        // Signal that a call has started, then block until released.
+        {
+            let (lock, cvar) = &*self.reached_first_call;
+            *lock.lock().unwrap() = true;
+            cvar.notify_all();
+        }
+        {
+            let (lock, cvar) = &*self.released;
+            let mut released = lock.lock().unwrap();
+            while !*released {
+                released = cvar.wait(released).unwrap();
+            }
+        }
+
+        Ok(test_output("[]", "", true))
+    }
+}
+
+#[test]
+fn build_cancellable_stops_launching_new_work_promptly_after_cancellation() {
+    // Deterministic (non-timing-based) cancellation test: the AIMD limiter
+    // starts at ceiling 1, so at most one `resource list` call is actually
+    // in flight until the first batch of successes lands. We block that one
+    // in-flight call, cancel, then release it — guaranteeing cancellation
+    // is observed before any group beyond the ones already dispatched to a
+    // worker thread can start.
+    let runner = BlockingFirstCallRunner::new(40);
+    let cancel = map::CancelToken::new();
+
+    let dmap = std::thread::scope(|scope| {
+        let handle = scope.spawn(|| {
+            map::build_cancellable(&runner, map::DEFAULT_BUDGET, &cancel)
+                .expect("a cancelled build must still return Ok with a partial map")
+        });
+
+        runner.wait_for_first_call();
+        cancel.cancel();
+        runner.release();
+
+        handle.join().expect("build thread must not panic")
+    });
+
+    assert!(
+        dmap.partial,
+        "a build cancelled mid-flight must be marked partial"
+    );
+    let calls_at_return = runner
+        .total_resource_calls
+        .load(std::sync::atomic::Ordering::SeqCst);
+    let worker_ceiling = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    assert!(
+        calls_at_return <= worker_ceiling,
+        "cancellation must stop new group processing well before all 40 groups are \
+         enumerated (saw {calls_at_return} resource-list calls, host parallelism {worker_ceiling})"
+    );
+    assert!(
+        calls_at_return < 40,
+        "cancellation must stop new group processing before all 40 groups are enumerated, \
+         saw {calls_at_return} resource-list calls"
+    );
+
+    // Structural "no leaked/orphaned worker" check: since `build_cancellable`
+    // only returns once every worker thread has joined (`thread::scope`
+    // guarantees this), the call count must be frozen by the time we get
+    // control back — no background thread can still be calling the runner.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let calls_after_wait = runner
+        .total_resource_calls
+        .load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        calls_at_return, calls_after_wait,
+        "no worker thread may still be invoking the runner after build_cancellable returned"
+    );
+}

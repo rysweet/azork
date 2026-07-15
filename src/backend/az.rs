@@ -9,6 +9,7 @@
 
 use super::Backend;
 use crate::az_runner::{AzRunner, ProcessAzRunner};
+use crate::dungeon::concurrency::{backoff_with_jitter, ThrottleDetector};
 use crate::parser::Direction;
 use crate::secrets::scrub;
 use crate::world::{Resource, Room, World};
@@ -81,20 +82,23 @@ impl AzBackend {
     ///
     /// Transient failures (throttling, timeouts, network blips) are retried;
     /// permanent failures (binary missing, authentication/authorization errors)
-    /// fail fast so the caller can surface an actionable message.
+    /// fail fast so the caller can surface an actionable message. Backoff
+    /// timing is computed by the same [`crate::dungeon::concurrency`]
+    /// helper the parallel dungeon-map enumeration uses, so an Azure
+    /// `Retry-After` hint is honored here too, instead of a plain fixed
+    /// exponential schedule.
     fn run(&self, args: &[&str]) -> Result<String, String> {
         let mut last_err = String::new();
         for attempt in 1..=MAX_ATTEMPTS {
             match self.run_once(args) {
                 Ok(out) => return Ok(out),
                 Err((err, retryable)) => {
+                    let floor = ThrottleDetector::detect(&err).unwrap_or(Duration::ZERO);
                     last_err = err;
                     if !retryable || attempt == MAX_ATTEMPTS {
                         break;
                     }
-                    // Exponential backoff: 400ms, 800ms, ...
-                    let backoff = BASE_BACKOFF * 2u32.pow(attempt - 1);
-                    sleep(backoff);
+                    sleep(backoff_with_jitter(BASE_BACKOFF, attempt, floor));
                 }
             }
         }

@@ -33,7 +33,13 @@ const AZ_READER_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 ///
 /// This is intentionally the *only* method: it is the narrow waist that makes
 /// "no real az, no network in tests" a property we can enforce by construction.
-pub trait AzRunner {
+///
+/// `Send + Sync` are required so a `&dyn AzRunner` can be shared across worker
+/// threads (e.g. by [`crate::dungeon::concurrency`]) via `std::thread::scope`,
+/// without needing to wrap it in an `Arc<Mutex<_>>`. Both [`ProcessAzRunner`]
+/// and [`FakeAzRunner`] satisfy this trivially since they hold no non-`Send`/
+/// non-`Sync` state.
+pub trait AzRunner: Send + Sync {
     /// Run `az <args...>` and return the completed process output.
     ///
     /// Returning [`io::Result`] (rather than pre-interpreting success) keeps the
