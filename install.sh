@@ -40,7 +40,10 @@ die() {
 }
 
 show_help() {
-  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+  # Print the entire leading comment block (lines starting with '#',
+  # skipping the shebang), stripping the '# ' prefix. This stays correct
+  # even as the header comment grows, unlike a hardcoded line range.
+  awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"
 }
 
 # ---------------------------------------------------------------------------
