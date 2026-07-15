@@ -33,7 +33,7 @@ fn two_room_world() -> World {
         .with_exit(Direction::North, "dark-rg")
         .with_resource(hazardous("storage"));
     let dark = Room::new("dark-rg", "?", "westus", false).with_exit(Direction::South, "prod-rg");
-    World::new(vec![lit, dark], "prod-rg", "sub-test-001")
+    World::new(vec![lit, dark], "prod-rg", "sub-test-001").expect("valid test room graph")
 }
 
 // --- look / examine -------------------------------------------------------
@@ -238,7 +238,7 @@ fn resize_a_zero_cost_resource_has_nothing_to_do() {
     // A free portal resource with no cost.
     let free = Resource::new("portal", "Microsoft.Portal/dashboards", "free dashboard");
     let room = Room::new("free-rg", "Free zone.", "eastus", true).with_resource(free);
-    let mut w2 = World::new(vec![room], "free-rg", "sub");
+    let mut w2 = World::new(vec![room], "free-rg", "sub").expect("valid test room graph");
     assert!(w2.resize("portal").contains("nothing to right-size"));
     // Unrelated: resize on missing target reported.
     assert!(w.resize("ghost").contains("no 'ghost'"));
@@ -304,7 +304,7 @@ fn score_is_floored_at_zero_for_a_disaster_estate() {
     for i in 0..10 {
         room = room.with_resource(hazardous(&format!("bad{i}")));
     }
-    let w = World::new(vec![room], "chaos-rg", "sub");
+    let w = World::new(vec![room], "chaos-rg", "sub").expect("valid test room graph");
     let score = w.score();
     // 10 resources * 4 hazards + 1 darkness = 41 hazards => far below 0, floored.
     assert!(score.contains("0/100"));
@@ -322,7 +322,7 @@ fn score_ranks_span_the_expected_bands() {
             let r = Resource::new(&format!("r{i}"), "kind", "desc");
             room = room.with_resource(r);
         }
-        World::new(vec![room], "rg", "sub")
+        World::new(vec![room], "rg", "sub").expect("valid test room graph")
     }
 
     // 0 hazards => 100 => Cloud Guardian.

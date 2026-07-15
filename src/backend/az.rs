@@ -11,14 +11,29 @@ use super::Backend;
 use crate::parser::Direction;
 use crate::world::{Resource, Room, World};
 use std::io::ErrorKind;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Maximum number of attempts (1 initial + retries) for a single `az` call.
 const MAX_ATTEMPTS: u32 = 3;
 /// Base delay for exponential backoff between retries.
 const BASE_BACKOFF: Duration = Duration::from_millis(400);
+/// Hard wall-clock timeout for a single `az` invocation. `az` can otherwise
+/// block indefinitely (e.g. an interactive device-code/browser login prompt,
+/// or a hung network call), which would freeze the whole game with no way
+/// out for the player.
+const AZ_CALL_TIMEOUT: Duration = Duration::from_secs(30);
+/// How often to poll a running `az` child process for completion.
+const AZ_POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// Upper bound on how long to wait for the stdout/stderr reader threads to
+/// finish once the child has exited (or been killed on timeout). This is a
+/// safety net, not the expected path: if `az` spawned a grandchild that
+/// inherited the piped file descriptors and is still holding them open,
+/// `read_to_end` would otherwise block forever. Bounding it here guarantees
+/// `run_once` always returns within a predictable wall-clock budget, at the
+/// cost of leaking the (now-orphaned) reader thread in that rare case.
+const AZ_READER_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Backend that queries the real Azure control plane via `az`.
 pub struct AzBackend;
@@ -54,20 +69,107 @@ impl AzBackend {
 
     /// Perform a single `az` invocation. Returns `(message, retryable)` on error.
     fn run_once(&self, args: &[&str]) -> Result<String, (String, bool)> {
-        let output = Command::new("az").args(args).output().map_err(|e| {
-            // A missing binary is never transient; other spawn errors might be.
-            let retryable = e.kind() != ErrorKind::NotFound;
-            (
-                format!("failed to launch 'az' (is it installed & on PATH?): {}", e),
-                retryable,
-            )
-        })?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        use std::io::Read;
+        use std::sync::mpsc;
+
+        let mut child = Command::new("az")
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                // A missing binary is never transient; other spawn errors might be.
+                let retryable = e.kind() != ErrorKind::NotFound;
+                (
+                    format!("failed to launch 'az' (is it installed & on PATH?): {}", e),
+                    retryable,
+                )
+            })?;
+
+        // Drain stdout/stderr concurrently on background threads, handing
+        // each buffer back over a channel rather than joining the thread
+        // directly — that lets the caller bound how long it waits below
+        // (AZ_READER_JOIN_TIMEOUT) instead of risking an indefinite join if
+        // a grandchild process keeps the pipe open. OS pipe buffers are only
+        // ~64KB; `az resource list` on a busy subscription can easily exceed
+        // that, and without draining while we wait, the child would block
+        // inside its own write() the moment the buffer fills — `try_wait()`
+        // would then never observe an exit, and a slow-but-successful
+        // command would be misreported as a timeout.
+        let mut stdout_pipe = child.stdout.take().expect("stdout was piped");
+        let mut stderr_pipe = child.stderr.take().expect("stderr was piped");
+        let (stdout_tx, stdout_rx) = mpsc::channel();
+        let (stderr_tx, stderr_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stdout_pipe.read_to_end(&mut buf);
+            let _ = stdout_tx.send(buf);
+        });
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stderr_pipe.read_to_end(&mut buf);
+            let _ = stderr_tx.send(buf);
+        });
+
+        // Single cleanup path for every exit from the poll loop (normal
+        // completion, timeout, or a try_wait() error): always attempt to
+        // kill+reap the child so no zombie process or leaked reader thread
+        // survives a failed/timed-out attempt, especially since these
+        // outcomes are retried by `run()`.
+        let deadline = Instant::now() + AZ_CALL_TIMEOUT;
+        let (status, timed_out) = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break (Some(status), false),
+                Ok(None) => {
+                    if Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break (None, true);
+                    }
+                    sleep(AZ_POLL_INTERVAL);
+                }
+                Err(_e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break (None, false);
+                }
+            }
+        };
+
+        let stdout = stdout_rx
+            .recv_timeout(AZ_READER_JOIN_TIMEOUT)
+            .unwrap_or_default();
+        let stderr = stderr_rx
+            .recv_timeout(AZ_READER_JOIN_TIMEOUT)
+            .unwrap_or_default();
+
+        if timed_out {
+            return Err((
+                format!(
+                    "'az {}' timed out after {}s (killed)",
+                    args.join(" "),
+                    AZ_CALL_TIMEOUT.as_secs()
+                ),
+                true,
+            ));
+        }
+        let status = match status {
+            Some(status) => status,
+            None => {
+                return Err((
+                    "failed to wait on 'az' process: process could not be reaped".to_string(),
+                    true,
+                ));
+            }
+        };
+
+        if !status.success() {
+            let stderr = String::from_utf8_lossy(&stderr);
             let msg = format!("'az {}' failed: {}", args.join(" "), stderr.trim());
             return Err((msg, is_transient(&stderr)));
         }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        Ok(String::from_utf8_lossy(&stdout).into_owned())
     }
 }
 
@@ -114,6 +216,40 @@ fn is_transient(stderr: &str) -> bool {
     transient.iter().any(|t| s.contains(t))
 }
 
+/// Parse `az ... -o tsv` output for `[].{name:name,location:location}` into
+/// `(name, location)` pairs, skipping blank-name rows and defaulting a
+/// missing location column to `"unknown"`. Pure and offline-testable.
+fn parse_group_tsv(raw: &str) -> Vec<(String, String)> {
+    let mut groups = Vec::new();
+    for line in raw.lines() {
+        let mut cols = line.split('\t');
+        if let Some(name) = cols.next() {
+            let loc = cols.next().unwrap_or("unknown").to_string();
+            if !name.trim().is_empty() {
+                groups.push((name.trim().to_string(), loc.trim().to_string()));
+            }
+        }
+    }
+    groups
+}
+
+/// Parse `az ... -o tsv` output for `[].{name:name,type:type}` into
+/// `(name, type)` pairs, skipping blank-name rows and defaulting a missing
+/// type column to `"resource"`. Pure and offline-testable.
+fn parse_resource_tsv(raw: &str) -> Vec<(String, String)> {
+    let mut resources = Vec::new();
+    for line in raw.lines() {
+        let mut cols = line.split('\t');
+        if let Some(rname) = cols.next() {
+            let rtype = cols.next().unwrap_or("resource").to_string();
+            if !rname.trim().is_empty() {
+                resources.push((rname.trim().to_string(), rtype.trim().to_string()));
+            }
+        }
+    }
+    resources
+}
+
 impl Default for AzBackend {
     fn default() -> Self {
         AzBackend::new()
@@ -126,11 +262,17 @@ impl Backend for AzBackend {
     }
 
     fn build_world(&self) -> Result<World, String> {
-        // Current subscription name (best-effort).
+        // Current subscription name (best-effort). If this fails, log why —
+        // the very next `az` call below will likely fail for the same reason
+        // (e.g. not logged in) with a more actionable message, but we don't
+        // want the "unknown-subscription" placeholder to be a silent mystery.
         let subscription = self
             .run(&["account", "show", "--query", "name", "-o", "tsv"])
             .map(|s| s.trim().to_string())
-            .unwrap_or_else(|_| "unknown-subscription".to_string());
+            .unwrap_or_else(|e| {
+                eprintln!("warning: could not determine current subscription: {e}");
+                "unknown-subscription".to_string()
+            });
 
         // Resource groups become rooms.
         let groups_raw = self.run(&[
@@ -141,17 +283,7 @@ impl Backend for AzBackend {
             "-o",
             "tsv",
         ])?;
-
-        let mut groups: Vec<(String, String)> = Vec::new();
-        for line in groups_raw.lines() {
-            let mut cols = line.split('\t');
-            if let Some(name) = cols.next() {
-                let loc = cols.next().unwrap_or("unknown").to_string();
-                if !name.trim().is_empty() {
-                    groups.push((name.trim().to_string(), loc.trim().to_string()));
-                }
-            }
-        }
+        let groups = parse_group_tsv(&groups_raw);
 
         if groups.is_empty() {
             return Err(
@@ -188,18 +320,12 @@ impl Backend for AzBackend {
                 "-o",
                 "tsv",
             ]) {
-                for line in res_raw.lines() {
-                    let mut cols = line.split('\t');
-                    if let Some(rname) = cols.next() {
-                        let rtype = cols.next().unwrap_or("resource").to_string();
-                        if !rname.trim().is_empty() {
-                            room = room.with_resource(Resource::new(
-                                rname.trim(),
-                                rtype.trim(),
-                                &format!("A live {} named {}.", rtype.trim(), rname.trim()),
-                            ));
-                        }
-                    }
+                for (rname, rtype) in parse_resource_tsv(&res_raw) {
+                    room = room.with_resource(Resource::new(
+                        &rname,
+                        &rtype,
+                        &format!("A live {} named {}.", rtype, rname),
+                    ));
                 }
             }
 
@@ -207,13 +333,58 @@ impl Backend for AzBackend {
         }
 
         let start = rooms[0].name.clone();
-        Ok(World::new(rooms, &start, &subscription))
+        World::new(rooms, &start, &subscription)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_transient;
+    use super::{is_transient, parse_group_tsv, parse_resource_tsv};
+
+    #[test]
+    fn parse_group_tsv_parses_name_and_location() {
+        let raw = "landing-rg\teastus\nhub-rg\twestus\n";
+        let groups = parse_group_tsv(raw);
+        assert_eq!(
+            groups,
+            vec![
+                ("landing-rg".to_string(), "eastus".to_string()),
+                ("hub-rg".to_string(), "westus".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_group_tsv_defaults_missing_location_and_skips_blank_names() {
+        let raw = "solo-rg\n\t\n   \teastus\n";
+        let groups = parse_group_tsv(raw);
+        // "solo-rg" has no second column -> defaults to "unknown".
+        // A line with an empty/whitespace-only name is skipped entirely.
+        assert_eq!(groups, vec![("solo-rg".to_string(), "unknown".to_string())]);
+    }
+
+    #[test]
+    fn parse_resource_tsv_parses_name_and_type() {
+        let raw = "storage1\tMicrosoft.Storage/storageAccounts\n";
+        let resources = parse_resource_tsv(raw);
+        assert_eq!(
+            resources,
+            vec![(
+                "storage1".to_string(),
+                "Microsoft.Storage/storageAccounts".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_resource_tsv_defaults_missing_type_and_skips_blank_names() {
+        let raw = "lonely-resource\n\t\n";
+        let resources = parse_resource_tsv(raw);
+        assert_eq!(
+            resources,
+            vec![("lonely-resource".to_string(), "resource".to_string())]
+        );
+    }
 
     #[test]
     fn throttling_and_5xx_are_transient() {

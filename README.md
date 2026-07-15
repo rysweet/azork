@@ -65,6 +65,27 @@ Run it directly during development:
 cargo run
 ```
 
+### Keeping it up to date
+
+AzZork can update itself from GitHub Releases:
+
+```bash
+azork update            # download & install the latest release, if newer
+azork update --check    # only report whether an update is available
+```
+
+It also performs a cheap, cached update check at startup that is fully
+opt-out and safe under CI / non-interactive use:
+
+```bash
+export AZORK_NO_UPDATE_CHECK=1   # disable the automatic startup check
+```
+
+Updates are verified by SHA-256 before install and the check is skipped
+automatically under CI, non-TTY, or subprocess invocation, so it never hangs or
+prompts in automation. See the [Self-Update guide](docs/UPDATING.md) for the
+full trust model, exit codes, and release flow.
+
 ## Usage
 
 ### Offline mock backend (default — no Azure credentials needed)
@@ -208,6 +229,8 @@ Full documentation lives in [`docs/`](docs/):
 - [Usage guide](docs/USAGE.md) — every command, the Grue mechanic, and scoring.
 - [Tutorial](docs/TUTORIAL.md) — a guided playthrough from first `look` to Cloud Guardian.
 - [Configuration reference](docs/CONFIGURATION.md) — backend selection, the mock world, and the read-only `az` backend.
+- [Self-Update guide](docs/UPDATING.md) — the `azork update` command, the cached startup check, security/trust model, and release flow.
+- [Development guide](docs/DEVELOPMENT.md) — pre-commit hooks, CI, and test coverage.
 - [API / module reference](docs/API.md) — internal architecture for contributors.
 
 ## License

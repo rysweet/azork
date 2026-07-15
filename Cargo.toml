@@ -1,6 +1,6 @@
 [package]
 name = "azork"
-version = "0.2.0"
+version = "0.4.0"
 edition = "2021"
 description = "AzZork: the Azure control plane reimagined as a Zork-style text adventure."
 license = "MIT"
@@ -12,3 +12,10 @@ name = "azork"
 path = "src/main.rs"
 
 [dependencies]
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+flate2 = "1"
+tar = "0.4"
+ureq = "2"
