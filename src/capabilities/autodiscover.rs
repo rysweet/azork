@@ -72,10 +72,11 @@ pub fn discover_new_groups(
     runner: &dyn AzRunner,
     known_groups: &[String],
 ) -> Result<Vec<String>, String> {
+    let known: std::collections::HashSet<&str> = known_groups.iter().map(String::as_str).collect();
     let all = derive::derive_groups(runner)?;
     Ok(all
         .into_iter()
-        .filter(|g| !known_groups.iter().any(|k| k == g))
+        .filter(|g| !known.contains(g.as_str()))
         .collect())
 }
 
