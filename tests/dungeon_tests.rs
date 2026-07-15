@@ -567,6 +567,74 @@ fn render_html_produces_self_contained_document_with_no_external_fetches() {
     assert!(!html.contains("https://") || html.contains("portal.azure.com"));
 }
 
+/// End-to-end regression for issue #34: a real Azure resource whose *name*
+/// happens to be secret-shaped (contains "bearer" as a substring, e.g. an
+/// App Service literally named "torchbearer") must not have its surrounding
+/// SVG markup corrupted by the secret scrubber that `render_html` runs over
+/// the final document. Before the fix, the scrubber treated "bearer " as
+/// the start of a ****** and swallowed everything up to the next
+/// whitespace -- which, for markup with no space between the closing
+/// `</title>` and the next tag, meant eating the closing tag and the start
+/// of the following `<rect ...>` element.
+#[test]
+fn render_html_preserves_svg_structure_for_secret_shaped_resource_name() {
+    let dmap = map::DungeonMap {
+        subscription: "mock".to_string(),
+        rooms: vec![map::Room {
+            id: "app-rg".to_string(),
+            name: "app-rg".to_string(),
+            region: "eastus".to_string(),
+            x: 0,
+            y: 0,
+            resources: vec![map::ResourceNode {
+                id: "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/app-rg/providers/Microsoft.Web/sites/torchbearer"
+                    .to_string(),
+                name: "torchbearer".to_string(),
+                kind: "Microsoft.Web/sites".to_string(),
+                region: "eastus".to_string(),
+                icon: "app-service".to_string(),
+            }],
+        }],
+        edges: vec![],
+        partial: false,
+    };
+
+    let html = render::render_html(&dmap);
+
+    // The resource name itself must survive intact (nothing redacted: it
+    // isn't actually a secret, just secret-shaped).
+    assert!(
+        html.contains("torchbearer"),
+        "resource name must appear unredacted in the rendered output"
+    );
+    assert!(
+        !html.contains("***REDACTED***"),
+        "a plain resource name must never trigger redaction"
+    );
+
+    // The <title> element must close properly and be immediately followed
+    // by the resource's <rect> icon element -- the exact tag boundary the
+    // scrubber previously corrupted.
+    assert!(
+        html.contains("</title><rect "),
+        "closing </title> tag and following <rect element must survive intact"
+    );
+
+    // The resource-type icon class (which names the Azure resource kind,
+    // e.g. app-service) must be present and well-formed.
+    assert!(
+        html.contains(r#"class="icon icon-app-service""#),
+        "resource-type icon class must survive intact"
+    );
+
+    // The <rect> element itself must be well-formed with all of its
+    // attributes intact (not partially eaten).
+    assert!(
+        html.contains(r#"width="20" height="20" rx="3""#),
+        "rect element attributes must survive intact"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // server: in-process request routing (the JSON API contract)
 // ---------------------------------------------------------------------------
