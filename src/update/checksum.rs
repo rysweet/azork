@@ -16,16 +16,20 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// Extract the bare hex digest from a checksum-file body.
+/// Parse and validate a SHA-256 digest from a checksum-file body.
 ///
-/// Checksum files are commonly `"<hex>  <filename>\n"`; this returns the first
-/// whitespace-delimited token, lowercased.
-fn extract_digest_token(expected: &str) -> Option<String> {
-    let token = expected.split_whitespace().next()?;
-    if token.is_empty() {
-        return None;
+/// Checksum files are commonly `"<hex>  <filename>\n"`, so this takes the first
+/// whitespace-delimited token and accepts it only when it is exactly 64 hex
+/// characters. Returns the canonical lowercase digest, or `None` for anything
+/// malformed (empty, wrong length, non-hex). This is the single source of truth
+/// for what counts as a valid digest.
+fn parse_expected_digest(expected: &str) -> Option<String> {
+    let token = expected.split_whitespace().next()?.to_ascii_lowercase();
+    if token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Some(token)
+    } else {
+        None
     }
-    Some(token.to_ascii_lowercase())
 }
 
 /// Return `true` iff the SHA-256 of `bytes` equals `expected`.
@@ -34,18 +38,11 @@ fn extract_digest_token(expected: &str) -> Option<String> {
 /// surrounding whitespace (as found in `sha256sum` output). Returns `false`
 /// for any malformed digest; never panics.
 pub fn verify_sha256(bytes: &[u8], expected: &str) -> bool {
-    let token = match extract_digest_token(expected) {
-        Some(t) => t,
-        None => return false,
-    };
-    // A SHA-256 digest is exactly 64 hex characters.
-    if token.len() != 64 || !token.chars().all(|c| c.is_ascii_hexdigit()) {
-        return false;
+    match parse_expected_digest(expected) {
+        // Both digests are public, so a plain equality on lowercase hex is fine.
+        Some(token) => sha256_hex(bytes) == token,
+        None => false,
     }
-    let actual = sha256_hex(bytes);
-    // Constant-time comparison is unnecessary here (both digests are public),
-    // but a straightforward equality on equal-length lowercase hex is fine.
-    actual == token
 }
 
 /// Verify `bytes` against `expected`, returning a structured error on mismatch.
@@ -53,13 +50,9 @@ pub fn verify_sha256(bytes: &[u8], expected: &str) -> bool {
 /// Used by the install path so a checksum failure surfaces as
 /// [`UpdateError::ChecksumMismatch`] with exit code 3.
 pub(crate) fn verify_or_error(bytes: &[u8], expected: &str) -> Result<()> {
-    let token = extract_digest_token(expected)
-        .ok_or_else(|| UpdateError::Parse("empty or malformed checksum file".into()))?;
-    if token.len() != 64 || !token.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(UpdateError::Parse(format!(
-            "checksum is not a 64-character hex digest: {token:?}"
-        )));
-    }
+    let token = parse_expected_digest(expected).ok_or_else(|| {
+        UpdateError::Parse("checksum file is empty or not a 64-character hex digest".into())
+    })?;
     let actual = sha256_hex(bytes);
     if actual == token {
         Ok(())
