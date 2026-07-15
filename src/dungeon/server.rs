@@ -167,22 +167,20 @@ impl ServerHandle {
     }
 
     /// Stop accepting new connections and join the server thread.
-    pub fn shutdown(mut self) {
-        self.shutdown_flag.store(true, Ordering::SeqCst);
-        // Nudge the accept loop past its blocking `accept()` call with a
-        // harmless local connection so it notices the shutdown flag
-        // promptly instead of waiting for the next real client.
-        let _ = TcpStream::connect(self.addr);
-        if let Some(handle) = self.join.take() {
-            let _ = handle.join();
-        }
-    }
+    ///
+    /// Identical to letting the handle simply go out of scope: the actual
+    /// shutdown (flag + wake + join) lives once, in [`Drop`], so this and an
+    /// implicit drop can never drift out of sync.
+    pub fn shutdown(self) {}
 }
 
 impl Drop for ServerHandle {
     fn drop(&mut self) {
         self.shutdown_flag.store(true, Ordering::SeqCst);
         if let Some(handle) = self.join.take() {
+            // Nudge the accept loop past its blocking `accept()` call with a
+            // harmless local connection so it notices the shutdown flag
+            // promptly instead of waiting for the next real client.
             let _ = TcpStream::connect(self.addr);
             let _ = handle.join();
         }

@@ -482,14 +482,14 @@ fn run_crawl(args: dungeon_cli::CrawlArgs) {
         }
     };
 
+    // No signal handler is installed here (that would need an extra
+    // dependency such as `ctrlc`, which this feature intentionally avoids).
+    // A plain Ctrl-C during enumeration therefore terminates the process the
+    // default OS way, same as any other AzZork command; `CancelToken` and
+    // `build_cancellable`'s partial-map handling exist so a future signal
+    // handler is a drop-in addition, and are already exercised directly by
+    // `tests/dungeon_tests.rs`.
     let cancel = dungeon_map::CancelToken::new();
-    {
-        let cancel_for_handler = cancel.clone();
-        // Best-effort: if installing the Ctrl-C handler fails for any reason
-        // we simply run without one — the crawl still completes normally,
-        // it just can't be interrupted early.
-        let _ = ctrlc_best_effort(move || cancel_for_handler.cancel());
-    }
 
     let dmap = match dungeon_map::build_cancellable(runner.as_ref(), args.budget, &cancel) {
         Ok(m) => m,
@@ -559,15 +559,6 @@ fn run_crawl(args: dungeon_cli::CrawlArgs) {
             "(Nothing written to disk and no --serve requested; pass --out <path> or --serve to view the map.)"
         );
     }
-}
-
-/// Best-effort Ctrl-C handling with zero extra dependencies: installs no
-/// real signal handler (that would require a crate like `ctrlc`), so this is
-/// currently a documented no-op that always returns `Ok`. `run_crawl` treats
-/// any error from this function identically to a graceful no-handler crawl,
-/// so wiring in a real handler later is a drop-in change.
-fn ctrlc_best_effort<F: Fn() + Send + 'static>(_on_interrupt: F) -> Result<(), String> {
-    Ok(())
 }
 
 /// A small, hardcoded, offline "mock estate" for Dungeon Crawler Mode's
