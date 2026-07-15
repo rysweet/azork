@@ -12,16 +12,20 @@ name = "azork"
 path = "src/main.rs"
 
 [features]
-# The default build is fully offline and dependency-free: the graph memory uses
-# the in-memory `GraphMemory` store with a hand-rolled on-disk format, so
-# `cargo build`/`cargo test` stay light, offline, and green on a fresh clone.
+# The default build embeds the agentic recipe-running capability (see the
+# `agent_engine` module) via a vendored, offline `path` dependency on
+# `recipe-runner-rs` (see `vendor/recipe-runner-rs/`), so `cargo build`/`cargo
+# test` stay fully offline and reproducible on a fresh clone while still
+# shipping the agentic capability by default — no network fetch, no opt-in
+# companion crate to build separately.
 #
 # Durable persistence backed by the native `amplihack-memory` (SQLite/lbug) store
 # is provided by the opt-in `memory-store/` companion crate, NOT by a dependency
-# in this manifest. That crate is deliberately kept out of the azork package (like
-# `agentic-bridge/`) because cargo resolves path/optional dependencies even when a
-# feature is off — pulling `amplihack-memory` into this manifest would break the
-# zero-dependency, offline fresh-clone build. See `memory-store/README.md`.
+# in this manifest. That crate is deliberately kept out of the azork package
+# (unlike the embedded `agent_engine` module) because cargo resolves
+# path/optional dependencies even when a feature is off — pulling
+# `amplihack-memory` into this manifest would break the zero-dependency, offline
+# fresh-clone build for the memory backend. See `memory-store/README.md`.
 default = []
 
 [dependencies]
@@ -32,3 +36,5 @@ sha2 = "0.10"
 flate2 = "1"
 tar = "0.4"
 ureq = "2"
+anyhow = "1"
+recipe-runner-rs = { path = "vendor/recipe-runner-rs" }

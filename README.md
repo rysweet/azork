@@ -105,25 +105,26 @@ green. Durable, SQLite-backed persistence over the native `amplihack-memory`
 library is available as an **opt-in companion crate**,
 [`memory-store/`](memory-store/): it mirrors the whole graph (nodes **and** edges)
 into an `amplihack-memory` store, reloads it faithfully across sessions, and offers
-full-text ranked recall through the library's own search engine. Like the agentic
-bridge, it is kept out of the azork package so the default build never links a
-native dependency — see [`memory-store/README.md`](memory-store/README.md).
+full-text ranked recall through the library's own search engine. Unlike the
+embedded `agent_engine` module (below), it is kept out of the azork package so
+the default build never links a native dependency — see
+[`memory-store/README.md`](memory-store/README.md).
 
-## Agentic intent resolution (optional companion crate)
+## Agentic intent resolution (embedded)
 
-The [`agentic-bridge/`](agentic-bridge/) companion crate bridges AzZork into the
-MIT-licensed [`recipe-runner-rs`] engine — the same way Simard and Powderfinger
-embed it. It implements the runner's `Adapter` trait (`AzorkAdapter`): *agent*
+The [`src/agent_engine/`](src/agent_engine/) module embeds AzZork into the
+MIT-licensed [`recipe-runner-rs`] engine. It implements the runner's `Adapter` trait (`AzorkAdapter`): *agent*
 steps resolve intent against the learned registry (deterministic, offline), *bash*
 steps delegate to the runner's CLI subprocess adapter so a recipe can shell out to
 `az`. `run_intent_recipe` runs an inline amplihack recipe with AzZork as the agent.
 
-It lives in a **separate crate on purpose**: azork itself stays zero-dependency, so
-`cargo build`/`cargo test` at the repo root remain light, offline, and green on a
-fresh clone. Building the bridge is opt-in and requires the reference repos checked
-out side-by-side — see [`agentic-bridge/README.md`](agentic-bridge/README.md).
+It is part of the **main azork crate**: `recipe-runner-rs` is vendored offline
+under [`vendor/recipe-runner-rs/`](vendor/recipe-runner-rs/) and depended on
+directly via a `path` dependency, so `cargo build`/`cargo test` at the repo root
+compile and exercise this capability **by default** — no separate crate to build,
+no reference repos to check out side-by-side, and no network access required.
 
-[`recipe-runner-rs`]: https://crates.io/crates/recipe-runner-rs
+[`recipe-runner-rs`]: vendor/recipe-runner-rs/
 
 ## Install
 
@@ -386,36 +387,39 @@ external `tests/` suite.
 
 ### Third-party dependencies
 
-The **default** build remains **dependency-free** (standard library only), so the
-core game, self-evolution, and graph memory add no license obligations. Two
-optional integrations pull external crates only when explicitly built:
+The core game, self-evolution, and graph memory add no license obligations
+beyond the small set of dependencies in the main `Cargo.toml`. The default
+build also embeds one agentic integration and keeps one durable-storage
+integration opt-in:
 
-- **`agentic-bridge/`** (separate companion crate) → the MIT-licensed
-  [`recipe-runner-rs`] agentic `Adapter` engine (and its transitive deps). Kept
-  out of the azork package so the default build stays zero-dep.
+- **`src/agent_engine/`** (embedded module, main crate) → the MIT-licensed
+  [`recipe-runner-rs`] agentic `Adapter` engine (and its transitive deps),
+  vendored offline under [`vendor/recipe-runner-rs/`](vendor/recipe-runner-rs/)
+  and depended on via a `path` dependency. Compiled and tested by default
+  `cargo build`/`cargo test` — no opt-in step required.
 - **`memory-store/`** (separate companion crate) → durable graph memory over the
-  MIT-licensed `amplihack-memory` library (SQLite-backed, `lbug`-capable). Also
-  kept out of the azork package so the default build stays zero-dep.
+  MIT-licensed `amplihack-memory` library (SQLite-backed, `lbug`-capable). Kept
+  out of the azork package so the default build stays zero-dep for that
+  integration.
 
-Both are MIT-compatible with this project's MIT license and neither links into the
-default `cargo build`/`cargo test`, which stay light and offline.
+Both are MIT-compatible with this project's MIT license. `agent_engine` compiles
+into the default `cargo build`/`cargo test`; `memory-store` does not.
 
 The Azure CLI extension under [`azext/`](azext/) is pure Python with **zero**
 third-party `install_requires` (it uses only the Azure CLI's own SDK).
 
-[`recipe-runner-rs`]: https://crates.io/crates/recipe-runner-rs
+[`recipe-runner-rs`]: vendor/recipe-runner-rs/
 
 
 ## Development
 
 ```bash
-cargo build      # compile (default: offline, zero-dep)
-cargo test       # run the unit test suite (parser + world model + backends + memory)
+cargo build      # compile (default: includes the embedded agent_engine module)
+cargo test       # run the unit test suite (parser + world model + backends + memory + agent_engine)
 cargo run        # play with the offline mock backend
 cargo clippy --all-targets   # lints (CI enforces -D warnings)
 
 cargo build --bin azork-oit          # the live outside-in-testing agent
-(cd agentic-bridge && cargo test)    # opt-in recipe-runner-rs companion crate
 (cd memory-store && cargo test)      # opt-in amplihack-memory durable-memory crate
 ```
 

@@ -24,6 +24,7 @@ pub mod update;
 pub mod world;
 
 pub mod agent;
+pub mod agent_engine;
 pub mod az_runner;
 pub mod capabilities;
 pub mod dungeon;
