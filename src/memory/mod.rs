@@ -316,6 +316,88 @@ impl GraphMemory {
         )
     }
 
+    /// Remember (or reinforce) a resource group as a *room* node. Idempotent on
+    /// label: a room seen again is reinforced rather than duplicated. Returns the
+    /// node id.
+    pub fn remember_room(&mut self, name: &str, region: &str) -> String {
+        if let Some(id) = self.find_by_label(MemoryKind::Room, name) {
+            self.reinforce(&id);
+            return id;
+        }
+        self.remember(
+            MemoryKind::Room,
+            name,
+            &format!("resource group in {region}"),
+            &[region, "room"],
+            0.5,
+        )
+    }
+
+    /// Remember (or reinforce) a resource as an *object* node inside a room, and
+    /// link `room -> contains -> resource`. Returns the resource node id.
+    pub fn remember_resource(&mut self, room_id: &str, name: &str, kind: &str) -> String {
+        let id = if let Some(existing) = self.find_by_label(MemoryKind::Resource, name) {
+            self.reinforce(&existing);
+            existing
+        } else {
+            self.remember(
+                MemoryKind::Resource,
+                name,
+                &format!("{kind} resource"),
+                &[kind, "resource"],
+                0.4,
+            )
+        };
+        // Link the room to the resource if the edge does not already exist.
+        if self.nodes.contains_key(room_id)
+            && !self
+                .edges
+                .iter()
+                .any(|e| e.from == room_id && e.to == id && e.relation == "contains")
+        {
+            let _ = self.add_edge(room_id, "contains", &id);
+        }
+        id
+    }
+
+    /// First node of `kind` whose label matches `label` (case-insensitive).
+    fn find_by_label(&self, kind: MemoryKind, label: &str) -> Option<String> {
+        let want = label.to_lowercase();
+        self.nodes
+            .values()
+            .find(|n| n.kind == kind && n.label.to_lowercase() == want)
+            .map(|n| n.id.clone())
+    }
+
+    /// A short, player-facing summary of what AzZork remembers: counts by kind
+    /// plus the most salient recent notes.
+    pub fn summary(&self) -> String {
+        if self.nodes.is_empty() {
+            return "AzZork's memory is empty — nothing learned yet.".to_string();
+        }
+        let count = |k: MemoryKind| self.nodes_of_kind(k).len();
+        let mut out = format!(
+            "AzZork remembers {} things: {} capabilities, {} rooms, {} resources, \
+             {} intents, {} friction notes.",
+            self.nodes.len(),
+            count(MemoryKind::Capability),
+            count(MemoryKind::Room),
+            count(MemoryKind::Resource),
+            count(MemoryKind::Intent),
+            count(MemoryKind::Friction),
+        );
+        // Surface the freshest friction notes — those are what we want to fix.
+        let mut frictions: Vec<&MemoryNode> = self.nodes_of_kind(MemoryKind::Friction);
+        frictions.sort_by_key(|f| std::cmp::Reverse(f.last_touch));
+        if !frictions.is_empty() {
+            out.push_str("\nRecent friction:");
+            for f in frictions.iter().take(5) {
+                out.push_str(&format!("\n  - {}", f.content));
+            }
+        }
+        out
+    }
+
     // ---- Persistence ---------------------------------------------------
 
     /// Persist the graph to `path` in a dependency-free line format, creating

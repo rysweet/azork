@@ -375,3 +375,44 @@ fn loading_missing_file_yields_empty_memory() {
     let path = std::path::Path::new("/nonexistent/azork/no-such.graph");
     assert!(GraphMemory::load(path).is_empty());
 }
+
+// ---- Gameplay recorders (rooms, resources, summary) --------------------
+
+#[test]
+fn remember_room_is_idempotent_and_reinforces() {
+    let mut mem = GraphMemory::new();
+    let a = mem.remember_room("azork-oit-rg", "eastus");
+    let b = mem.remember_room("azork-oit-rg", "eastus");
+    assert_eq!(a, b, "the same room is not duplicated");
+    assert_eq!(mem.nodes_of_kind(MemoryKind::Room).len(), 1);
+    assert!(
+        mem.get(&a).unwrap().usage_count >= 1,
+        "re-seeing reinforces"
+    );
+}
+
+#[test]
+fn remember_resource_links_room_contains_resource() {
+    let mut mem = GraphMemory::new();
+    let room = mem.remember_room("rg1", "eastus");
+    let res = mem.remember_resource(&room, "store1", "storage");
+    let contained = mem.neighbors(&room, Some("contains"));
+    assert_eq!(contained.len(), 1);
+    assert_eq!(contained[0].id, res);
+    // Recording the same resource again does not duplicate the edge.
+    mem.remember_resource(&room, "store1", "storage");
+    assert_eq!(mem.neighbors(&room, Some("contains")).len(), 1);
+}
+
+#[test]
+fn summary_counts_each_kind_and_surfaces_friction() {
+    let mut mem = GraphMemory::new();
+    let room = mem.remember_room("rg1", "eastus");
+    mem.remember_resource(&room, "store1", "storage");
+    mem.record_intent("look around");
+    mem.record_friction("errors are cryptic", &["oit"]);
+    let s = mem.summary();
+    assert!(s.contains("1 rooms"));
+    assert!(s.contains("1 resources"));
+    assert!(s.contains("errors are cryptic"));
+}

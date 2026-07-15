@@ -77,6 +77,12 @@ pub enum Command {
     Learn(String),
     /// List the az capabilities AzZork has learned so far.
     Capabilities,
+    /// Record a friction note into persistent memory (something to improve).
+    Friction(String),
+    /// Ranked recall over persistent memory for a free-text query.
+    Recall(String),
+    /// Summarise what AzZork remembers (counts by kind + recent notes).
+    Memory,
     /// Show help.
     Help,
     /// Leave the game.
@@ -180,6 +186,21 @@ pub fn parse(input: &str) -> Command {
             }
         }
         "capabilities" | "caps" | "powers" | "spells" => Command::Capabilities,
+        "friction" | "note" | "gripe" => {
+            if arg.is_empty() {
+                Command::Unknown(input.to_string())
+            } else {
+                Command::Friction(arg)
+            }
+        }
+        "recall" | "remember" => {
+            if arg.is_empty() {
+                Command::Unknown(input.to_string())
+            } else {
+                Command::Recall(arg)
+            }
+        }
+        "memory" | "mem" | "recollect" => Command::Memory,
         "help" | "?" | "h" => Command::Help,
         "quit" | "q" | "exit" => Command::Quit,
         _ => Command::Unknown(input.to_string()),
@@ -329,6 +350,26 @@ mod tests {
     #[test]
     fn unknown_verb() {
         assert!(matches!(parse("frobnicate the vm"), Command::Unknown(_)));
+    }
+
+    #[test]
+    fn memory_commands() {
+        assert_eq!(
+            parse("friction help is confusing"),
+            Command::Friction("help is confusing".to_string())
+        );
+        assert_eq!(
+            parse("note the errors are cryptic"),
+            Command::Friction("errors are cryptic".to_string())
+        );
+        assert_eq!(
+            parse("recall storage"),
+            Command::Recall("storage".to_string())
+        );
+        assert_eq!(parse("memory"), Command::Memory);
+        assert_eq!(parse("mem"), Command::Memory);
+        assert!(matches!(parse("friction"), Command::Unknown(_)));
+        assert!(matches!(parse("recall"), Command::Unknown(_)));
     }
 
     #[test]

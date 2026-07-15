@@ -8,6 +8,7 @@ use azork::agent::{IntentResolver, MockAdapter};
 use azork::az_runner::{AzRunner, ProcessAzRunner};
 use azork::backend;
 use azork::capabilities::{registry::default_cache_path, CapabilityRegistry};
+use azork::memory::{default_memory_path, GraphMemory, MemoryKind};
 use azork::parser::{self, Command};
 use azork::world::{GrueOutcome, World};
 use std::io::{self, BufRead, Write};
@@ -48,6 +49,9 @@ const HELP: &str = r#"Commands (Zork verbs -> Azure operations):
   score                   report your governance posture (0-100)
   learn <group>           introspect 'az <group> --help' and grow AzZork's powers
   capabilities / caps     list the az capabilities AzZork has learned
+  recall <query>          ranked recall over AzZork's persistent memory
+  friction <note>         record something confusing/missing to improve later
+  memory / mem            summarise what AzZork remembers
   help / ?                show this help
   quit / q                leave the dungeon
 
@@ -100,6 +104,19 @@ fn main() {
             cache_path.display()
         );
     }
+    // AzZork's persistent graph memory — rooms, resources, intents, friction.
+    let memory_path = default_memory_path();
+    let mut memory = GraphMemory::load(&memory_path);
+    if !memory.is_empty() {
+        println!(
+            "[memory: recalled {} remembered nodes from {}]\n",
+            memory.len(),
+            memory_path.display()
+        );
+    }
+    // Remember where we start so navigation memory has an anchor.
+    record_room(&mut memory, &world);
+
     // Live derivation runs through the real `az` CLI at runtime.
     let runner = ProcessAzRunner::new();
 
@@ -121,15 +138,23 @@ fn main() {
             }
         };
 
+        // Every non-empty line is an intent AzZork has now seen.
+        if !line.trim().is_empty() {
+            memory.record_intent(line.trim());
+        }
+
         let cmd = parser::parse(&line);
         let quit = handle(
             &mut world,
             cmd,
             &mut lines,
             &mut registry,
+            &mut memory,
             &runner,
             &cache_path,
         );
+        // Keep navigation memory in step with wherever we now stand.
+        record_room(&mut memory, &world);
         if quit {
             break;
         }
@@ -138,8 +163,23 @@ fn main() {
         run_grue_check(&mut world);
     }
 
+    // Persist everything AzZork learned this session.
+    if let Err(e) = memory.save(&memory_path) {
+        eprintln!("[memory: warning — could not persist memory: {}]", e);
+    }
+
     if world.game_over {
         println!("\n{}", world.score());
+    }
+}
+
+/// Fold the current room and its resources into the graph memory: a resource
+/// group is a *room* node, each resource an *object* linked by `contains`.
+fn record_room(memory: &mut GraphMemory, world: &World) {
+    let room = world.current_room();
+    let room_id = memory.remember_room(&room.name, &room.region);
+    for res in &room.resources {
+        memory.remember_resource(&room_id, &res.name, &res.kind);
     }
 }
 
@@ -174,6 +214,7 @@ fn handle<I>(
     cmd: Command,
     lines: &mut I,
     registry: &mut CapabilityRegistry,
+    memory: &mut GraphMemory,
     runner: &dyn AzRunner,
     cache_path: &Path,
 ) -> bool
@@ -212,8 +253,19 @@ where
         Command::Inventory => println!("{}", world.inventory()),
         Command::Score => println!("{}", world.score()),
         Command::Cast(spell) => println!("{}", cast(world, &spell)),
-        Command::Learn(group) => println!("{}", learn(registry, runner, cache_path, &group)),
+        Command::Learn(group) => {
+            println!("{}", learn(registry, memory, runner, cache_path, &group))
+        }
         Command::Capabilities => println!("{}", capabilities_report(registry)),
+        Command::Friction(note) => {
+            memory.record_friction(&note, &["player"]);
+            println!(
+                "Noted. AzZork will remember this friction: \"{}\".",
+                note.trim()
+            );
+        }
+        Command::Recall(query) => println!("{}", recall_report(memory, &query)),
+        Command::Memory => println!("{}", memory.summary()),
         Command::Help => println!("{}", help_text(registry)),
         Command::Quit => {
             println!("\nYou step back through the portal.\n{}", world.score());
@@ -222,10 +274,47 @@ where
         Command::Unknown(raw) => {
             // Never hard-fail: try to resolve intent against learned capabilities.
             let resolver = IntentResolver::new(MockAdapter::new(), registry);
-            println!("{}", resolver.resolve(&raw).narrate());
+            let resolution = resolver.resolve(&raw);
+            println!("{}", resolution.narrate());
+            // An input AzZork could not resolve is friction worth remembering.
+            if matches!(resolution, azork::agent::Resolution::Unresolved(_)) {
+                memory.record_friction(
+                    &format!("unresolved intent: {}", raw.trim()),
+                    &["intent", "unresolved"],
+                );
+            }
         }
     }
     false
+}
+
+/// Ranked recall over the graph memory, rendered for the player.
+fn recall_report(memory: &GraphMemory, query: &str) -> String {
+    let hits = memory.recall(query, None, 6);
+    if hits.is_empty() {
+        return format!("AzZork recalls nothing about \"{}\".", query.trim());
+    }
+    let mut out = format!("AzZork recalls, for \"{}\":", query.trim());
+    for n in hits {
+        out.push_str(&format!(
+            "\n  [{}] {} — {}",
+            kind_token(n.kind),
+            n.label,
+            n.content
+        ));
+    }
+    out
+}
+
+/// Short display token for a memory kind.
+fn kind_token(kind: MemoryKind) -> &'static str {
+    match kind {
+        MemoryKind::Capability => "cap",
+        MemoryKind::Room => "room",
+        MemoryKind::Resource => "res",
+        MemoryKind::Intent => "intent",
+        MemoryKind::Friction => "friction",
+    }
 }
 
 /// The full help text: static core verbs plus any learned capabilities.
@@ -258,6 +347,7 @@ fn capabilities_report(registry: &CapabilityRegistry) -> String {
 /// persist them so the knowledge survives to future sessions.
 fn learn(
     registry: &mut CapabilityRegistry,
+    memory: &mut GraphMemory,
     runner: &dyn AzRunner,
     cache_path: &Path,
     group: &str,
@@ -265,6 +355,11 @@ fn learn(
     let group = group.split_whitespace().next().unwrap_or(group);
     match registry.learn_group(runner, group) {
         Ok(added) => {
+            // Mirror the freshly-learned capabilities into graph memory so recall
+            // can surface them alongside rooms, resources, and intents.
+            for cap in registry.iter().filter(|c| c.group == group) {
+                memory.remember_capability(cap);
+            }
             let save_note = match registry.save(cache_path) {
                 Ok(()) => format!("(remembered in {})", cache_path.display()),
                 Err(e) => format!("(warning: could not persist: {})", e),
