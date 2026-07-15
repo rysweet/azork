@@ -21,6 +21,14 @@ pub enum Resolution {
     Verb(Capability),
     /// Several plausible matches to offer the player ("did you mean…").
     Suggestions(Vec<Capability>),
+    /// Nothing is learned yet, but the input's nouns point at a specific az
+    /// domain — steer the player to `learn <group>` instead of a dead end.
+    LearnHint {
+        /// The original input.
+        raw: String,
+        /// The az group most likely to satisfy the intent (e.g. `"storage"`).
+        group: String,
+    },
     /// Nothing matched; carry the original input so the caller can explain.
     Unresolved(String),
 }
@@ -48,6 +56,10 @@ impl Resolution {
                 s.push_str("\nType 'learn <group>' to teach AzZork more, or 'help'.");
                 s
             }
+            Resolution::LearnHint { group, .. } => format!(
+                "You sense the '{group}' domain governs this, but AzZork has not \
+                 studied it yet. Type 'learn {group}' to gain those powers, then try again.",
+            ),
             Resolution::Unresolved(raw) => format!(
                 "The incantation \"{}\" stirs nothing yet. Try 'learn <group>' to \
                  discover new powers, or 'help'.",
@@ -84,7 +96,15 @@ impl Adapter for MockAdapter {
     fn resolve(&self, input: &str, registry: &CapabilityRegistry) -> Resolution {
         let hits = registry.suggest(input, 5);
         match hits.as_slice() {
-            [] => Resolution::Unresolved(input.to_string()),
+            [] => match infer_group(input) {
+                // Nothing learned yet, but the nouns point at a domain: steer to
+                // `learn <group>` rather than dead-ending the player.
+                Some(group) => Resolution::LearnHint {
+                    raw: input.to_string(),
+                    group,
+                },
+                None => Resolution::Unresolved(input.to_string()),
+            },
             [only] => Resolution::Verb((*only).clone()),
             [first, second, ..] => {
                 // If the input names an exact verb and the top hit dominates the
@@ -102,6 +122,46 @@ impl Adapter for MockAdapter {
             }
         }
     }
+}
+
+/// Infer the most relevant `az` command group from the nouns in a free-text
+/// intent, so AzZork can point an unstudied player at the right `learn <group>`.
+///
+/// Deterministic and offline: a small keyword→group table covering the common
+/// domains. Returns `None` when nothing recognisable is mentioned.
+pub fn infer_group(input: &str) -> Option<String> {
+    let s = input.to_lowercase();
+    // Ordered most-specific first so multi-word phrases win over bare tokens.
+    const TABLE: &[(&str, &str)] = &[
+        ("resource group", "group"),
+        ("storage account", "storage"),
+        ("virtual machine", "vm"),
+        ("key vault", "keyvault"),
+        ("keyvault", "keyvault"),
+        ("blob", "storage"),
+        ("container", "storage"),
+        ("storage", "storage"),
+        ("network", "network"),
+        ("vnet", "network"),
+        ("subnet", "network"),
+        ("database", "sql"),
+        ("sql", "sql"),
+        ("cosmos", "cosmosdb"),
+        ("function", "functionapp"),
+        ("webapp", "webapp"),
+        ("web app", "webapp"),
+        ("app service", "webapp"),
+        ("aks", "aks"),
+        ("kubernetes", "aks"),
+        ("vm", "vm"),
+        ("group", "group"),
+    ];
+    for (needle, group) in TABLE {
+        if s.contains(needle) {
+            return Some((*group).to_string());
+        }
+    }
+    None
 }
 
 /// Convenience wrapper tying an [`Adapter`] to a registry.
@@ -152,7 +212,34 @@ mod tests {
     fn unknown_input_is_unresolved_on_empty_registry() {
         let reg = CapabilityRegistry::new();
         let r = IntentResolver::new(MockAdapter::new(), &reg);
+        // "frobnicate" names no known az domain, so it stays unresolved.
         assert!(matches!(r.resolve("frobnicate"), Resolution::Unresolved(_)));
+    }
+
+    #[test]
+    fn creation_intent_on_empty_registry_hints_at_learn_group() {
+        let reg = CapabilityRegistry::new();
+        let r = IntentResolver::new(MockAdapter::new(), &reg);
+        match r.resolve("create a storage account") {
+            Resolution::LearnHint { group, .. } => assert_eq!(group, "storage"),
+            other => panic!("expected LearnHint, got {:?}", other),
+        }
+        assert!(r
+            .resolve("make a new resource group")
+            .narrate()
+            .contains("learn group"));
+    }
+
+    #[test]
+    fn infer_group_maps_common_domains() {
+        assert_eq!(
+            infer_group("spin up a virtual machine").as_deref(),
+            Some("vm")
+        );
+        assert_eq!(infer_group("a new key vault").as_deref(), Some("keyvault"));
+        assert_eq!(infer_group("some sql database").as_deref(), Some("sql"));
+        assert_eq!(infer_group("provision a vnet").as_deref(), Some("network"));
+        assert_eq!(infer_group("total gibberish here"), None);
     }
 
     #[test]
