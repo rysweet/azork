@@ -14,9 +14,7 @@
 //!   * `read_version_stamp(exe: &Path) -> Option<String>`
 //!   * `has_drift(exe: &Path, running_version: &str) -> bool`
 
-use azork::update::post_install::{
-    has_drift, read_version_stamp, stamp_path, write_version_stamp,
-};
+use azork::update::post_install::{has_drift, read_version_stamp, stamp_path, write_version_stamp};
 use std::path::{Path, PathBuf};
 
 #[test]

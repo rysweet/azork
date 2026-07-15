@@ -141,5 +141,8 @@ fn startup_outcome_variants_are_distinct() {
         StartupUpdateOutcome::ExitSuccess
     );
     // Continue is the common, safe default.
-    assert_eq!(StartupUpdateOutcome::Continue, StartupUpdateOutcome::Continue);
+    assert_eq!(
+        StartupUpdateOutcome::Continue,
+        StartupUpdateOutcome::Continue
+    );
 }

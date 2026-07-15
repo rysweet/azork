@@ -1,6 +1,8 @@
 /target
 **/*.rs.bk
-Cargo.lock
+
+# Cargo.lock IS committed: this crate ships a binary (`azork`) and CI builds
+# with `--locked` for reproducible builds and a deterministic self-updater.
 
 # amplihack / session runtime state (not project code)
 .claude/runtime/

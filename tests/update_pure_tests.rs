@@ -103,10 +103,7 @@ fn is_newer_false_for_older() {
 fn supported_target_is_present_on_linux_x86_64() {
     // The CI/build host for this project is linux x86_64.
     if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        assert_eq!(
-            supported_release_target(),
-            Some("x86_64-unknown-linux-gnu")
-        );
+        assert_eq!(supported_release_target(), Some("x86_64-unknown-linux-gnu"));
     }
 }
 

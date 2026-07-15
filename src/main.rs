@@ -6,6 +6,7 @@
 
 use azork::backend;
 use azork::parser::{self, Command};
+use azork::update;
 use azork::world::{GrueOutcome, World};
 use std::io::{self, BufRead, Write};
 
@@ -48,6 +49,43 @@ const HELP: &str = r#"Commands (Zork verbs -> Azure operations):
 Beware: acting in a dark (unmonitored) room invites a Grue to eat you."#;
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+
+    // Top-level subcommands / flags handled before the game starts.
+    match args.get(1).map(String::as_str) {
+        Some("update") => {
+            let check_only = args.iter().any(|a| a == "--check");
+            std::process::exit(update::run_update_with(check_only));
+        }
+        Some("--version") | Some("-V") | Some("version") => {
+            println!("azork {}", azork::VERSION);
+            return;
+        }
+        Some("--help") | Some("-h") => {
+            println!("{}", BANNER);
+            println!("{}", HELP);
+            println!(
+                "\nSubcommands:\n  azork                 play the adventure (offline mock by default)\n  \
+                 azork update          self-update to the latest release\n  \
+                 azork --version       print the version\n\nEnvironment:\n  \
+                 AZORK_BACKEND=az      use the live `az` CLI backend\n  \
+                 {}=1  disable the startup update check",
+                update::NO_UPDATE_CHECK_ENV
+            );
+            return;
+        }
+        _ => {}
+    }
+
+    // Optional, cached, subprocess-safe startup update check. Never hangs or
+    // prompts under CI / non-TTY; see `update::check`.
+    if matches!(
+        update::check::maybe_startup_check(&args),
+        update::check::StartupUpdateOutcome::ExitSuccess
+    ) {
+        return;
+    }
+
     let requested_backend = resolve_backend_id();
     if let Some(id) = &requested_backend {
         if !backend::is_recognized(id) {
