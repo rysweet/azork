@@ -264,7 +264,12 @@ The updater is built to be safe by default:
   symlinks are rejected; only the expected `azork` binary is extracted.
 - **Atomic self-replace.** The new binary is written to a temporary file in the
   target directory and then atomically renamed over the old one, so an
-  interrupted update never leaves a half-written executable.
+  interrupted update never leaves a half-written executable. The temporary
+  filename mixes the PID, a nanosecond timestamp, and an ASLR-influenced
+  stack address through an avalanche hash, so it is not predictable by
+  another local process ahead of time (mitigating the CWE-377
+  TOCTOU/symlink-plant class of risk on shared multi-user hosts) without
+  adding a dependency.
 - **Bounded reads (compressed *and* decompressed).** HTTP responses are parsed
   against a fixed schema and capped at 512 MiB of *compressed* download to resist
   malformed payloads. Archive extraction independently caps the *decompressed*

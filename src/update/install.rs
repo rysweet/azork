@@ -58,12 +58,40 @@ pub fn download_and_replace(release: &ResolvedUpdate) -> Result<PathBuf> {
     Ok(current_exe)
 }
 
+/// Generate a hard-to-predict suffix for temp file/directory names, without
+/// pulling in a CSPRNG dependency. Mixes a nanosecond timestamp, the PID, and
+/// the address of a stack-local value (subject to ASLR) through a SplitMix64
+/// avalanche step so the combined bits are well distributed rather than a
+/// predictable concatenation. This is not cryptographically secure, but it
+/// closes the practical predictability gap (CWE-377 TOCTOU/symlink-plant) of
+/// a bare PID-derived name on shared multi-user hosts, since another local
+/// process cannot know the timestamp nanosecond or our stack address without
+/// already having ptrace-level visibility into this process.
+fn unique_suffix() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let pid = std::process::id() as u64;
+    let stack_marker: u8 = 0;
+    let addr = std::ptr::addr_of!(stack_marker) as u64;
+
+    let mut x = nanos ^ pid.rotate_left(17) ^ addr.rotate_left(33);
+    x ^= x >> 33;
+    x = x.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    x ^= x >> 33;
+    x = x.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+    x ^= x >> 33;
+    x
+}
+
 /// Create a unique scratch directory for extraction.
 fn scratch_dir() -> Result<PathBuf> {
     let dir = std::env::temp_dir().join(format!(
-        "azork-update-{}-{}",
+        "azork-update-{}-{:016x}",
         std::process::id(),
-        super::now_unix()
+        unique_suffix()
     ));
     std::fs::create_dir_all(&dir)
         .map_err(|e| UpdateError::Io(format!("create scratch dir {}: {e}", dir.display())))?;
@@ -77,7 +105,11 @@ fn install_binary_atomic(source: &Path, destination: &Path) -> Result<()> {
         .parent()
         .ok_or_else(|| UpdateError::TargetNotWritable(destination.display().to_string()))?;
 
-    let temp_dest = destination.with_extension(format!("new-{}", std::process::id()));
+    let temp_dest = destination.with_extension(format!(
+        "new-{}-{:016x}",
+        std::process::id(),
+        unique_suffix()
+    ));
 
     std::fs::copy(source, &temp_dest).map_err(|e| map_write_error(parent, e))?;
 
