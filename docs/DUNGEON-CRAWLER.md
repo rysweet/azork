@@ -330,6 +330,12 @@ similar), never anything that mutates:
   like a key, connection string, SAS token, or credential is scrubbed before it
   reaches the map graph, the rendered HTML, the JSON API, or memory — Dungeon
   Crawler Mode does not persist anything to AzZork's graph memory at all.
+  Scrubbing operates on the matched secret-shaped substring only: it never
+  consumes surrounding tag delimiters, so a resource name that merely looks
+  secret-shaped (e.g. an App Service named `torchBearer`, which contains the
+  substring `bearer`) is redacted in place without corrupting the enclosing
+  `<title>`/`<rect>`/`<text>` markup or dropping the resource-type label next
+  to it.
 - **Defensive JSON parsing.** Untrusted `az … -o json` output is parsed
   structurally (via `serde`/`serde_json`), not via fragile string/line
   parsing, and malformed or unexpected output is handled as a recoverable

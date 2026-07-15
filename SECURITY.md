@@ -52,7 +52,17 @@ Full findings, severities, and status are tracked in
   (`src/backend/az.rs`) and `capabilities::derive::run_help`
   (`src/capabilities/derive.rs`) — the two call sites that turn raw
   `az_runner::AzRunner::run` bytes into text a player, log, or persisted
-  state might see.
+  state might see. `scrub` is also applied to every resource and room label
+  rendered by Dungeon Crawler Mode (`src/render.rs`) before it is written
+  into the map's SVG/HTML, so a resource whose name is itself secret-shaped
+  never leaks the matched substring onto the page. The bearer-token matcher
+  requires a real word boundary before treating `bearer` as an authorization
+  prefix and always copies non-matching text through unchanged, so a
+  resource name like `torchBearer` sitting next to SVG tag delimiters
+  (`</title>`, `<rect ...>`) is left intact rather than having the
+  surrounding markup consumed as part of a false-positive "token" (see
+  [issue #34](https://github.com/rysweet/azork/issues/34) and Finding #10 in
+  [`docs/SECURITY-AUDIT.md`](docs/SECURITY-AUDIT.md)).
 - **No panics on untrusted CLI/JSON output.** Parsing of `az ... -o tsv`
   output and command input is written to tolerate missing columns, empty
   fields, and malformed lines without panicking (see tests in

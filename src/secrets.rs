@@ -195,16 +195,42 @@ fn is_secret_key(key: &str) -> bool {
 
 /// Redact `Bearer <token>` authorization header values.
 fn redact_bearer_tokens(line: &str) -> String {
-    const PREFIX: &str = "Bearer ";
+    const NEEDLE: &str = "bearer ";
     let mut out = String::with_capacity(line.len());
     let mut idx = 0;
-    while let Some(rel) = find_ignore_case(&line[idx..], "bearer ") {
+    while let Some(rel) = find_ignore_case(&line[idx..], NEEDLE) {
         let start = idx + rel;
+        // Word-boundary check: only treat "bearer " as an auth-header token
+        // when it isn't glued onto a preceding word character. Without this,
+        // resource names like "torchbearer" false-positive on the "bearer "
+        // substring and the code below would then swallow everything up to
+        // the next whitespace as the "token" -- for markup that means eating
+        // a closing tag and the next tag's name (issue #34).
+        let preceded_by_word_char = line[..start]
+            .chars()
+            .next_back()
+            .map(|c| c.is_alphanumeric() || c == '_')
+            .unwrap_or(false);
+        if preceded_by_word_char {
+            // False-positive match: copy the rejected span through verbatim
+            // (instead of dropping it) and resume scanning right after it.
+            let skip_to = start + NEEDLE.len();
+            out.push_str(&line[idx..skip_to]);
+            idx = skip_to;
+            continue;
+        }
         out.push_str(&line[idx..start]);
-        out.push_str(PREFIX);
-        let tok_start = start + PREFIX.len();
+        out.push_str("Bearer ");
+        let tok_start = start + NEEDLE.len();
+        // A bearer token is a run of typical token characters (base64url /
+        // JWT alphabet). Stop at the first character outside that set --
+        // notably including markup delimiters like '<' -- rather than only
+        // at whitespace, so a token glued directly to a tag (no space
+        // before it) doesn't get swallowed along with the tag.
         let tok_end = line[tok_start..]
-            .find([' ', '\t', '\n'])
+            .find(|c: char| {
+                !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~' | '+' | '/' | '='))
+            })
             .map(|i| tok_start + i)
             .unwrap_or(line.len());
         out.push_str(REDACTED);
@@ -317,6 +343,34 @@ mod tests {
         let scrubbed = scrub(url);
         assert!(!scrubbed.contains("SuperSecretSig123"));
         assert!(scrubbed.contains("se=2999")); // non-secret param survives
+    }
+
+    #[test]
+    fn does_not_corrupt_svg_markup_for_secret_shaped_resource_name() {
+        // Exact shape from issue #34: a resource named "torchbearer" false
+        // matches the "bearer " substring inside its own name. Before the
+        // fix this swallowed the closing </title> and the following <rect
+        // tag name as if they were the redacted "token".
+        let svg = r#"<title>torchbearer (Microsoft.Web/sites)</title><rect x="570" y="1574" width="20" height="20" rx="3" class="icon icon-app-service"/><text x="572" y="1588" class="icon-label">AS</text></g>"#;
+        let scrubbed = scrub(svg);
+        assert_eq!(
+            scrubbed, svg,
+            "no secret-shaped auth token present; markup must survive byte-for-byte"
+        );
+        assert!(scrubbed.contains("</title><rect "));
+        assert!(scrubbed.contains(r#"class="icon icon-app-service""#));
+    }
+
+    #[test]
+    fn redacts_real_bearer_token_adjacent_to_closing_tag() {
+        // A genuine "Bearer <token>" immediately followed by a tag boundary
+        // (no whitespace before the tag) must still be redacted, and must
+        // not eat the tag itself.
+        let text = "<title>Bearer abc123</title>";
+        let scrubbed = scrub(text);
+        assert!(!scrubbed.contains("abc123"));
+        assert!(scrubbed.contains("Bearer ***REDACTED***"));
+        assert!(scrubbed.ends_with("</title>"));
     }
 
     #[test]
