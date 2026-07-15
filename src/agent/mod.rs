@@ -26,11 +26,13 @@ pub const MAX_INTENT_ECHO_LEN: usize = 200;
 /// indicator when truncation occurred. Used both before narrating unresolved
 /// input back to the player and before persisting it as friction memory.
 pub fn truncate_intent(raw: &str) -> String {
-    if raw.chars().count() <= MAX_INTENT_ECHO_LEN {
-        return raw.to_string();
+    // Single pass: find the byte offset of the char just past the cap (if
+    // any) instead of first counting all chars and then re-iterating to
+    // collect them, which would walk the string twice for long input.
+    match raw.char_indices().nth(MAX_INTENT_ECHO_LEN) {
+        None => raw.to_string(),
+        Some((cut, _)) => format!("{}...(truncated)", &raw[..cut]),
     }
-    let truncated: String = raw.chars().take(MAX_INTENT_ECHO_LEN).collect();
-    format!("{truncated}...(truncated)")
 }
 
 /// The outcome of trying to resolve an ambiguous / unknown player intent.
