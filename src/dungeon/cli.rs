@@ -26,6 +26,13 @@ pub struct CrawlArgs {
     /// `--playwright` — best-effort richer render, always degrades
     /// gracefully to the native renderer.
     pub playwright: bool,
+    /// `--mock-size <spec>` — request a sized synthetic mock estate instead
+    /// of the fixed hand-authored one; ignored for the `az` backend. Same
+    /// grammar as `AZORK_MOCK_SIZE` (see
+    /// `crate::backend::mock_gen::MockSizeParams::parse`): a preset
+    /// (`small`/`medium`/`large`/`huge`), an explicit `<rgs>x<per-rg>` pair,
+    /// or a bare resource-group count, each optionally suffixed `:<seed>`.
+    pub mock_size: Option<String>,
 }
 
 impl Default for CrawlArgs {
@@ -37,6 +44,7 @@ impl Default for CrawlArgs {
             out: None,
             budget: DEFAULT_BUDGET,
             playwright: false,
+            mock_size: None,
         }
     }
 }
@@ -52,7 +60,7 @@ pub fn is_crawl_subcommand(arg: &str) -> bool {
 /// `--help`/`-h` is passed and on request exits 0 rather than being treated
 /// as an unknown flag.
 pub const CRAWL_HELP: &str = r#"azork crawl [--backend <id>] [--serve] [--port <n>] [--out <path>]
-            [--budget <n>] [--playwright]
+            [--budget <n>] [--playwright] [--mock-size <spec>]
 
 Render the Dungeon Crawler map (alias: azork dungeon).
 
@@ -64,7 +72,18 @@ Flags:
   --budget <n>             room/exploration budget, default 64
   --playwright             best-effort richer render; degrades gracefully to the
                            native renderer if unavailable
+  --mock-size <spec>       generate a sized synthetic mock estate instead of the
+                           fixed one (mock backend only); spec is a preset
+                           (small/medium/large/huge), an explicit "<rgs>x<per-rg>"
+                           pair (e.g. "50x6"), or a bare resource-group count,
+                           each optionally suffixed ":<seed>" (e.g. "large:42")
   --help, -h               show this help and exit
+
+Environment:
+  AZORK_MOCK_SIZE               same grammar as --mock-size
+  AZORK_MOCK_RGS                override the resource-group count
+  AZORK_MOCK_RESOURCES_PER_RG   override the resources-per-group count
+  AZORK_MOCK_SEED                override the PRNG seed
 "#;
 
 /// Whether `args` (the flags following the `crawl`/`dungeon` subcommand)
@@ -125,6 +144,14 @@ pub fn parse(args: &[String]) -> Result<CrawlArgs, String> {
                     .map_err(|_| format!("--budget value '{raw}' is not a valid number"))?;
             }
             "--playwright" => parsed.playwright = true,
+            "--mock-size" => {
+                i += 1;
+                parsed.mock_size = Some(
+                    args.get(i)
+                        .cloned()
+                        .ok_or_else(|| "--mock-size requires a value".to_string())?,
+                );
+            }
             other => return Err(format!("unknown flag '{other}'")),
         }
         i += 1;

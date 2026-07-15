@@ -238,6 +238,50 @@ cargo run
 This loads a small synthetic Azure estate (subscriptions, resource groups and
 resources) so the game runs anywhere with **zero credentials and no network**.
 
+#### Generating a bigger synthetic estate (sized mock backend)
+
+For testing or iterating on the Dungeon Crawler map layout without waiting on
+a slow real `az` crawl, you can ask the mock backend to synthesize a much
+larger, deterministic, fully offline estate on demand:
+
+```bash
+# Named presets: small (5 RGs), medium (25 RGs), large (100 RGs), huge (500 RGs)
+AZORK_MOCK_SIZE=large azork
+AZORK_MOCK_SIZE=large azork crawl --serve
+# or, equivalently, as a crawl-only flag:
+azork crawl --mock-size large --serve
+
+# Explicit counts: "<resource-groups>x<resources-per-group>"
+AZORK_MOCK_SIZE=200x12 azork crawl --serve
+
+# A bare resource-group count (resources-per-group falls back to the medium
+# preset's value, 5)
+AZORK_MOCK_SIZE=200 azork crawl --serve
+
+# Pin the seed explicitly for a byte-for-byte reproducible run (":<seed>"
+# suffix works on any of the forms above); omitted, a fixed default seed is
+# used so runs are reproducible either way
+AZORK_MOCK_SIZE=large:42 azork crawl --serve
+```
+
+Or override the resource-group count, resources-per-group, and seed
+independently:
+
+```bash
+AZORK_MOCK_RGS=200 AZORK_MOCK_RESOURCES_PER_RG=15 AZORK_MOCK_SEED=7 azork crawl --serve
+```
+
+Generation is a pure, seeded function of these parameters — the same size
+and seed always produce an identical estate, so screenshots and layout tests
+stay stable. There's no arbitrary size cap; resource groups and their
+resources (storage accounts, VMs, vnets, web sites, key vaults, AKS, SQL,
+Cosmos DB, NICs, NSGs, public IPs, load balancers, and more) are generated in
+a single streaming pass bounded only by the counts you request, and are
+connected into a single navigable dungeon (never disconnected islands). With
+none of `AZORK_MOCK_SIZE` / `AZORK_MOCK_RGS` / `AZORK_MOCK_RESOURCES_PER_RG` /
+`AZORK_MOCK_SEED` set, behavior is exactly the original small fixed mock
+estate — nothing changes for existing usage.
+
 ### Real backend (optional — shells out to the `az` CLI)
 
 Explore your *actual* subscription. Requires the [Azure CLI](https://learn.microsoft.com/cli/azure/)

@@ -655,6 +655,20 @@ fn run_grue_check(world: &mut World) {
     }
 }
 
+/// Resolve sized-mock-estate parameters for Dungeon Crawler Mode: an
+/// explicit `--mock-size <spec>` flag takes precedence over the
+/// `AZORK_MOCK_SIZE`/`AZORK_MOCK_RGS`/`AZORK_MOCK_RESOURCES_PER_RG`/
+/// `AZORK_MOCK_SEED` environment variables. Returns `None` when neither is
+/// set, so the default fixed `demo_runner` estate is used unchanged.
+fn resolve_crawl_mock_size(
+    args: &dungeon_cli::CrawlArgs,
+) -> Option<Result<backend::mock_gen::MockSizeParams, String>> {
+    if let Some(spec) = &args.mock_size {
+        return Some(backend::mock_gen::MockSizeParams::parse(spec));
+    }
+    backend::mock_gen::MockSizeParams::from_env()
+}
+
 /// Run Dungeon Crawler Mode: enumerate (read-only) the selected backend's
 /// subscription via the `AzRunner` seam, assemble a `DungeonMap`, and then
 /// write it to a file, serve it, and/or print a summary, per `args`.
@@ -667,7 +681,24 @@ fn run_crawl(args: dungeon_cli::CrawlArgs) {
                     "Warning: unknown backend '{other}'; falling back to the offline mock estate."
                 );
             }
-            Box::new(demo_runner())
+            match resolve_crawl_mock_size(&args) {
+                Some(Ok(params)) => {
+                    println!(
+                        "Generating sized mock estate: {} resource group(s) x ~{} resource(s) \
+                         each (seed {:#x}).",
+                        params.resource_groups, params.resources_per_group, params.seed
+                    );
+                    Box::new(backend::mock_gen::build_fake_runner(params))
+                }
+                Some(Err(e)) => {
+                    eprintln!(
+                        "Warning: invalid mock size configuration ({e}); using the default \
+                         offline mock estate."
+                    );
+                    Box::new(demo_runner())
+                }
+                None => Box::new(demo_runner()),
+            }
         }
     };
 

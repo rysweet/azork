@@ -34,6 +34,7 @@ map of your subscription. Click any room to see what lives inside it.
 ## Table of contents
 
 - [Quick start](#quick-start)
+- [Generating a sized mock estate](#generating-a-sized-mock-estate)
 - [Command reference](#command-reference)
 - [The map model](#the-map-model)
 - [Dungeon-map rendering](#dungeon-map-rendering)
@@ -67,6 +68,11 @@ azork crawl --backend az --serve --port 8420
 
 # Try it fully offline against the built-in mock estate first
 azork crawl --serve
+
+# Generate a much bigger, deterministic offline mock estate to stress-test
+# the map layout (room sizing, corridor spacing, decorations) without a slow
+# real `az` crawl
+azork crawl --mock-size large --serve
 ```
 
 `crawl` (alias: `dungeon`) is a top-level subcommand of the `azork` binary,
@@ -74,7 +80,7 @@ alongside the classic REPL mode — it does not require a separate install:
 
 ```
 azork crawl [--backend <id>] [--serve] [--port <n>] [--out <path>]
-            [--budget <n>] [--playwright]
+            [--budget <n>] [--playwright] [--mock-size <spec>]
 ```
 
 | Flag | Default | Meaning |
@@ -85,11 +91,68 @@ azork crawl [--backend <id>] [--serve] [--port <n>] [--out <path>]
 | `--out <path>` | none | Write the rendered map (self-contained HTML) to a file. Can be combined with `--serve`. |
 | `--budget <n>` | `500` | Soft cap on in-memory resources buffered per enumeration window before flushing to the map graph; tune only if you are constrained on memory. Does **not** limit how much of the subscription is mapped — enumeration always continues to completion or cancellation, just in bounded-size batches. |
 | `--playwright` | off | Best-effort, local-only headless-browser post-processing of the native render (e.g. a rasterized snapshot). Never drives an external website; silently no-ops back to the plain native renderer if browsers aren't installed locally — see [below](#the-optional-playwright-pass). |
+| `--mock-size <spec>` | none (fixed 5-room estate) | Generate a sized synthetic mock estate instead of the fixed one (`mock` backend only) — see [Generating a sized mock estate](#generating-a-sized-mock-estate) below. |
 
 Press `Ctrl-C` to stop the server; enumeration itself can also be cancelled
 mid-flight (`Ctrl-C` during the "Mapping subscription..." phase) and will still
 serve whatever partial map has been assembled so far, clearly marked as
 partial.
+
+## Generating a sized mock estate
+
+The default `mock` backend (no `--mock-size`/`AZORK_MOCK_SIZE`/etc. set) is
+an unchanged, small, hand-authored five-room estate — existing behavior,
+tests and screenshots are unaffected. For iterating on map layout at scale,
+request a bigger synthetic estate via `--mock-size` (or the equivalent
+environment variables, which also work for the interactive REPL):
+
+```bash
+# Named presets
+azork crawl --mock-size small  --serve   #   5 resource groups x  3 resources
+azork crawl --mock-size medium --serve   #  25 resource groups x  5 resources
+azork crawl --mock-size large  --serve   # 100 resource groups x  8 resources
+azork crawl --mock-size huge   --serve   # 500 resource groups x 10 resources
+
+# Explicit "<resource-groups>x<resources-per-group>" pair
+azork crawl --mock-size 200x12 --serve
+
+# A bare resource-group count (resources-per-group falls back to the medium
+# preset's value, 5)
+azork crawl --mock-size 200 --serve
+
+# Pin the seed for a byte-for-byte reproducible run: append ":<seed>" to any
+# of the forms above (a fixed default seed is used if omitted, so every form
+# is reproducible either way)
+azork crawl --mock-size large:42 --serve
+```
+
+Or via environment variables (used by both `azork crawl` and the interactive
+REPL, e.g. plain `azork`):
+
+| Variable | Meaning |
+| --- | --- |
+| `AZORK_MOCK_SIZE` | Same grammar as `--mock-size`: a preset (`small`/`medium`/`med`/`large`/`huge`), an explicit `<rgs>x<per-rg>` pair, or a bare resource-group count, each optionally suffixed `:<seed>`. |
+| `AZORK_MOCK_RGS` | Overrides the resource-group count explicitly (takes precedence over `AZORK_MOCK_SIZE`). |
+| `AZORK_MOCK_RESOURCES_PER_RG` | Overrides the resources-per-group count explicitly. |
+| `AZORK_MOCK_SEED` | Overrides the PRNG seed explicitly. |
+
+```bash
+AZORK_MOCK_RGS=200 AZORK_MOCK_RESOURCES_PER_RG=15 AZORK_MOCK_SEED=7 azork crawl --serve
+AZORK_MOCK_SIZE=large azork   # the interactive REPL also honors sized mock estates
+```
+
+Generation is deterministic and fully offline: given the same resource-group
+count, resources-per-group count and seed, the estate generated is always
+byte-for-byte identical, so snapshot/layout tests and screenshots stay
+stable. There is no arbitrary hard cap on size — generation is a single
+streaming pass bounded only by the counts requested. Generated resources are
+drawn from the same Azure types the map/icon table already recognises
+(storage accounts, VMs, vnets, web sites, key vaults, AKS, SQL, Cosmos DB,
+NICs, NSGs, public IPs, load balancers, and more), and resource groups are
+laid out and connected as a grid dungeon (row-wise east/west corridors plus
+north/south links between rows) so the result is always a single connected
+map, never disconnected islands, regardless of size. See
+`src/backend/mock_gen.rs` for the generator itself.
 
 ## Command reference
 
@@ -97,14 +160,17 @@ Dungeon Crawler Mode reuses the exact same backend selection rules as the REPL
 (`--backend`, `-b`, `AZORK_BACKEND`), so anything you already know from
 [Configuration](CONFIGURATION.md#backend-selection) applies unchanged. The
 `mock` backend gives you a small, deterministic five-room dungeon to try the
-renderer and server against without any Azure credentials.
+renderer and server against without any Azure credentials — or a much larger
+one via `--mock-size`/`AZORK_MOCK_SIZE` (see above).
 
 ```bash
 azork crawl                       # mock estate, write nothing, just summarize
 azork crawl --serve               # mock estate, serve on an OS-assigned port
+azork crawl --mock-size large --serve  # sized mock estate (100 RGs), served
 azork crawl -b az --serve         # your real subscription, read-only, served
 azork crawl -b az --out map.html  # your real subscription, saved to a file
 ```
+
 
 ## The map model
 

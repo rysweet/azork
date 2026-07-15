@@ -71,6 +71,17 @@ identity-rg
 This world is used by the entire test suite; no test path ever invokes the `az`
 backend.
 
+### Generating a larger, sized synthetic estate
+
+For testing or iterating on the Dungeon Crawler map layout at scale, the mock
+backend can also synthesize a much larger, deterministic offline estate on
+demand via `AZORK_MOCK_SIZE` (or `AZORK_MOCK_RGS` /
+`AZORK_MOCK_RESOURCES_PER_RG` / `AZORK_MOCK_SEED`, or the `azork crawl
+--mock-size <spec>` flag). With none of these set, the fixed five-room estate
+above is used unchanged. See
+[Dungeon Crawler Mode → Generating a sized mock estate](DUNGEON-CRAWLER.md#generating-a-sized-mock-estate)
+for the full grammar and examples.
+
 ## The `az` backend (live Azure)
 
 The `az` backend maps your **real** subscription into the dungeon by shelling
@@ -127,6 +138,10 @@ primarily a mock-world feature.
 | Variable | Values | Default | Effect |
 | --- | --- | --- | --- |
 | `AZORK_BACKEND` | `mock`, `az`, `real`, `azure` | `mock` | Selects the backend when no `--backend` flag is given. |
+| `AZORK_MOCK_SIZE` | preset/`NxM`/count, optionally `:seed` | unset (fixed 5-room estate) | Requests a sized synthetic mock estate — see [Dungeon Crawler Mode → Generating a sized mock estate](DUNGEON-CRAWLER.md#generating-a-sized-mock-estate). |
+| `AZORK_MOCK_RGS` | positive integer | unset | Overrides the sized mock estate's resource-group count explicitly. |
+| `AZORK_MOCK_RESOURCES_PER_RG` | positive integer | unset | Overrides the sized mock estate's resources-per-group count explicitly. |
+| `AZORK_MOCK_SEED` | u64 | unset (fixed default seed) | Overrides the sized mock estate's PRNG seed explicitly, for byte-for-byte reproducible runs. |
 | `AZORK_CACHE_DIR` | any writable directory | see below | Directory for the learned-capability cache (`capabilities.tsv`) and graph memory (`memory.graph`). |
 | `AZORK_MAX_ROOMS` | positive integer | `40` | (`az` backend) max resource groups mapped into rooms, so large tenants stay responsive. |
 | `AZORK_MAX_RESOURCE_ROOMS` | positive integer | `8` | (`az` backend) max rooms whose resources are enumerated via `az resource list`. |

@@ -9,6 +9,7 @@ use crate::world::World;
 
 pub mod az;
 pub mod mock;
+pub mod mock_gen;
 
 /// Something that can construct the initial game world.
 pub trait Backend {
@@ -22,10 +23,27 @@ pub trait Backend {
 /// Select a backend by identifier. Falls back to mock for anything unknown.
 ///
 /// Recognised ids: `mock` (default), `az` / `real` / `azure`.
+///
+/// For the mock backend, if `AZORK_MOCK_SIZE` / `AZORK_MOCK_RGS` /
+/// `AZORK_MOCK_RESOURCES_PER_RG` / `AZORK_MOCK_SEED` request a sized
+/// synthetic estate (see [`mock_gen::MockSizeParams::from_env`]), a
+/// [`mock_gen::SizedMockBackend`] is returned instead of the fixed
+/// hand-authored [`mock::MockBackend`]. With none of those env vars set,
+/// behaviour is unchanged from before this parameterization existed.
 pub fn select(id: &str) -> Box<dyn Backend> {
     match id.to_lowercase().as_str() {
         "az" | "real" | "azure" => Box::new(az::AzBackend::new()),
-        _ => Box::new(mock::MockBackend::new()),
+        _ => match mock_gen::MockSizeParams::from_env() {
+            Some(Ok(params)) => Box::new(mock_gen::SizedMockBackend::new(params)),
+            Some(Err(e)) => {
+                eprintln!(
+                    "Warning: invalid mock size configuration ({e}); using the default \
+                     offline mock estate."
+                );
+                Box::new(mock::MockBackend::new())
+            }
+            None => Box::new(mock::MockBackend::new()),
+        },
     }
 }
 

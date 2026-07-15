@@ -982,6 +982,7 @@ fn parse_defaults_match_documentation() {
     assert_eq!(parsed.out, None);
     assert_eq!(parsed.budget, map::DEFAULT_BUDGET);
     assert!(!parsed.playwright);
+    assert_eq!(parsed.mock_size, None);
 }
 
 #[test]
@@ -997,6 +998,8 @@ fn parse_reads_all_documented_flags() {
         "--budget",
         "10",
         "--playwright",
+        "--mock-size",
+        "large:42",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -1009,6 +1012,13 @@ fn parse_reads_all_documented_flags() {
     assert_eq!(parsed.out.as_deref(), Some("dungeon.html"));
     assert_eq!(parsed.budget, 10);
     assert!(parsed.playwright);
+    assert_eq!(parsed.mock_size.as_deref(), Some("large:42"));
+}
+
+#[test]
+fn parse_mock_size_requires_a_value() {
+    let args: Vec<String> = ["--mock-size"].iter().map(|s| s.to_string()).collect();
+    assert!(cli::parse(&args).is_err());
 }
 
 #[test]
