@@ -55,6 +55,35 @@ fn make_targz_raw(name: &str, contents: &[u8]) -> Vec<u8> {
     enc.finish().expect("finish gzip")
 }
 
+/// Build a `.tar.gz` archive containing a single entry with a raw entry type
+/// (e.g. `Symlink`), bypassing `append_data`'s regular-file-only API — needed
+/// to construct the adversarial symlink archive `extract_binary` must reject.
+fn make_targz_typed(name: &str, entry_type: tar::EntryType, link_target: Option<&str>) -> Vec<u8> {
+    let buf = Vec::new();
+    let enc = GzEncoder::new(buf, Compression::default());
+    let mut builder = tar::Builder::new(enc);
+    let mut header = tar::Header::new_gnu();
+    {
+        let gnu = header.as_gnu_mut().expect("gnu header");
+        let bytes = name.as_bytes();
+        assert!(bytes.len() <= gnu.name.len(), "raw name too long for test");
+        gnu.name[..bytes.len()].copy_from_slice(bytes);
+        if let Some(target) = link_target {
+            let link_bytes = target.as_bytes();
+            gnu.linkname[..link_bytes.len()].copy_from_slice(link_bytes);
+        }
+    }
+    header.set_size(0);
+    header.set_mode(0o644);
+    header.set_entry_type(entry_type);
+    header.set_cksum();
+    builder
+        .append(&header, std::io::empty())
+        .expect("append typed entry");
+    let enc = builder.into_inner().expect("finish tar");
+    enc.finish().expect("finish gzip")
+}
+
 #[test]
 fn extract_returns_the_named_binary() {
     let payload = b"#!/fake azork binary\x00\x01\x02";
@@ -121,6 +150,38 @@ fn extract_rejects_corrupt_archive() {
     let dir = tempdir();
     let garbage = b"this is definitely not a gzip stream";
     assert!(extract_binary(garbage, "azork", dir.path()).is_err());
+}
+
+#[test]
+fn extract_rejects_symlink_entry() {
+    // A symlink entry named "azork" pointing outside dest_dir must be
+    // refused outright, never followed or materialized as a link.
+    let dir = tempdir();
+    let archive = make_targz_typed("azork", tar::EntryType::Symlink, Some("/etc/passwd"));
+    let result = extract_binary(&archive, "azork", dir.path());
+    assert!(result.is_err(), "symlink entry must be rejected");
+    assert!(
+        !dir.path().join("azork").exists(),
+        "no symlink may be materialized in the destination directory"
+    );
+}
+
+#[test]
+fn extract_rejects_oversized_entry() {
+    // A tar entry whose declared size exceeds the extraction cap must be
+    // rejected, with no partial file left behind in dest_dir.
+    const OVER_CAP: usize = 512 * 1024 * 1024 + 1; // MAX_EXTRACTED_BYTES + 1 byte
+    let dir = tempdir();
+    let payload = vec![0u8; OVER_CAP];
+    let archive = make_targz(&[("azork", &payload)]);
+
+    let result = extract_binary(&archive, "azork", dir.path());
+
+    assert!(result.is_err(), "oversized entry must be rejected");
+    assert!(
+        !dir.path().join("azork").exists(),
+        "partial file must be removed when the size cap trips"
+    );
 }
 
 // --- tiny temp-dir helper (avoids an extra dev-dependency) ---------------

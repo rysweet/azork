@@ -40,6 +40,13 @@ pub mod install;
 pub mod network;
 pub mod post_install;
 
+/// Hard cap on a release asset's size, shared by [`network`] (bounding the
+/// downloaded bytes) and [`archive`] (bounding the decompressed bytes). A
+/// single source of truth keeps the two guards in lockstep: raising one
+/// without the other would otherwise turn an early, clear download-time
+/// rejection into a confusing post-download extraction failure.
+pub(crate) const MAX_RELEASE_ASSET_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
+
 // Re-export the fail-closed primitives at the module root so callers (and the
 // contract tests) can reach them without knowing the internal layout.
 pub use archive::extract_binary;

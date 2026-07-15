@@ -15,7 +15,9 @@ use std::time::Duration;
 const NETWORK_TIMEOUT_SECS: u64 = 8;
 
 /// Hard cap on any single download (guards against oversize/bomb responses).
-const MAX_DOWNLOAD_BYTES: usize = 512 * 1024 * 1024; // 512 MiB
+/// Shared with [`super::archive`]'s extraction cap via
+/// [`super::MAX_RELEASE_ASSET_BYTES`] so both guards move together.
+const MAX_DOWNLOAD_BYTES: usize = super::MAX_RELEASE_ASSET_BYTES as usize;
 
 /// GitHub host prefixes a *final* (post-redirect) response may legitimately be
 /// served from. GitHub's `releases/download/...` URLs 302 to the opaque signed

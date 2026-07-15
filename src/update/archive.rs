@@ -14,8 +14,10 @@ use std::path::{Component, Path, PathBuf};
 /// Hard cap on the *decompressed* size of the extracted binary. The download is
 /// already capped, but a compromised (yet checksum-consistent) release could
 /// declare an enormous tar entry; bounding the streamed output guards against
-/// disk-exhaustion decompression bombs.
-const MAX_EXTRACTED_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
+/// disk-exhaustion decompression bombs. Shared with [`super::network`]'s
+/// download cap via [`super::MAX_RELEASE_ASSET_BYTES`] so both guards move
+/// together.
+const MAX_EXTRACTED_BYTES: u64 = super::MAX_RELEASE_ASSET_BYTES;
 
 /// Returns `true` if `path` is safe to extract *within* a destination dir:
 /// it is relative and contains no `..` component.

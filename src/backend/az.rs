@@ -156,6 +156,40 @@ fn is_transient(stderr: &str) -> bool {
     transient.iter().any(|t| s.contains(t))
 }
 
+/// Parse `az ... -o tsv` output for `[].{name:name,location:location}` into
+/// `(name, location)` pairs, skipping blank-name rows and defaulting a
+/// missing location column to `"unknown"`. Pure and offline-testable.
+fn parse_group_tsv(raw: &str) -> Vec<(String, String)> {
+    let mut groups = Vec::new();
+    for line in raw.lines() {
+        let mut cols = line.split('\t');
+        if let Some(name) = cols.next() {
+            let loc = cols.next().unwrap_or("unknown").to_string();
+            if !name.trim().is_empty() {
+                groups.push((name.trim().to_string(), loc.trim().to_string()));
+            }
+        }
+    }
+    groups
+}
+
+/// Parse `az ... -o tsv` output for `[].{name:name,type:type}` into
+/// `(name, type)` pairs, skipping blank-name rows and defaulting a missing
+/// type column to `"resource"`. Pure and offline-testable.
+fn parse_resource_tsv(raw: &str) -> Vec<(String, String)> {
+    let mut resources = Vec::new();
+    for line in raw.lines() {
+        let mut cols = line.split('\t');
+        if let Some(rname) = cols.next() {
+            let rtype = cols.next().unwrap_or("resource").to_string();
+            if !rname.trim().is_empty() {
+                resources.push((rname.trim().to_string(), rtype.trim().to_string()));
+            }
+        }
+    }
+    resources
+}
+
 impl Default for AzBackend {
     fn default() -> Self {
         AzBackend::new()
@@ -189,17 +223,7 @@ impl Backend for AzBackend {
             "-o",
             "tsv",
         ])?;
-
-        let mut groups: Vec<(String, String)> = Vec::new();
-        for line in groups_raw.lines() {
-            let mut cols = line.split('\t');
-            if let Some(name) = cols.next() {
-                let loc = cols.next().unwrap_or("unknown").to_string();
-                if !name.trim().is_empty() {
-                    groups.push((name.trim().to_string(), loc.trim().to_string()));
-                }
-            }
-        }
+        let groups = parse_group_tsv(&groups_raw);
 
         if groups.is_empty() {
             return Err(
@@ -236,18 +260,12 @@ impl Backend for AzBackend {
                 "-o",
                 "tsv",
             ]) {
-                for line in res_raw.lines() {
-                    let mut cols = line.split('\t');
-                    if let Some(rname) = cols.next() {
-                        let rtype = cols.next().unwrap_or("resource").to_string();
-                        if !rname.trim().is_empty() {
-                            room = room.with_resource(Resource::new(
-                                rname.trim(),
-                                rtype.trim(),
-                                &format!("A live {} named {}.", rtype.trim(), rname.trim()),
-                            ));
-                        }
-                    }
+                for (rname, rtype) in parse_resource_tsv(&res_raw) {
+                    room = room.with_resource(Resource::new(
+                        &rname,
+                        &rtype,
+                        &format!("A live {} named {}.", rtype, rname),
+                    ));
                 }
             }
 
@@ -261,7 +279,52 @@ impl Backend for AzBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::is_transient;
+    use super::{is_transient, parse_group_tsv, parse_resource_tsv};
+
+    #[test]
+    fn parse_group_tsv_parses_name_and_location() {
+        let raw = "landing-rg\teastus\nhub-rg\twestus\n";
+        let groups = parse_group_tsv(raw);
+        assert_eq!(
+            groups,
+            vec![
+                ("landing-rg".to_string(), "eastus".to_string()),
+                ("hub-rg".to_string(), "westus".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_group_tsv_defaults_missing_location_and_skips_blank_names() {
+        let raw = "solo-rg\n\t\n   \teastus\n";
+        let groups = parse_group_tsv(raw);
+        // "solo-rg" has no second column -> defaults to "unknown".
+        // A line with an empty/whitespace-only name is skipped entirely.
+        assert_eq!(groups, vec![("solo-rg".to_string(), "unknown".to_string())]);
+    }
+
+    #[test]
+    fn parse_resource_tsv_parses_name_and_type() {
+        let raw = "storage1\tMicrosoft.Storage/storageAccounts\n";
+        let resources = parse_resource_tsv(raw);
+        assert_eq!(
+            resources,
+            vec![(
+                "storage1".to_string(),
+                "Microsoft.Storage/storageAccounts".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_resource_tsv_defaults_missing_type_and_skips_blank_names() {
+        let raw = "lonely-resource\n\t\n";
+        let resources = parse_resource_tsv(raw);
+        assert_eq!(
+            resources,
+            vec![("lonely-resource".to_string(), "resource".to_string())]
+        );
+    }
 
     #[test]
     fn throttling_and_5xx_are_transient() {
