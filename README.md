@@ -374,6 +374,7 @@ Full documentation lives in [`docs/`](docs/):
 - [Usage guide](docs/USAGE.md) — every command, the Grue mechanic, and scoring.
 - [Tutorial](docs/TUTORIAL.md) — a guided playthrough from first `look` to Cloud Guardian.
 - [Configuration reference](docs/CONFIGURATION.md) — backend selection, the mock world, and the read-only `az` backend.
+- [Auto-Discovery guide](docs/AUTODISCOVERY.md) — how AzZork learns new `az` groups automatically at startup, cache behavior, and the `autodiscover` module API.
 - [Self-Update guide](docs/UPDATING.md) — the `azork update` command, the cached startup check, security/trust model, and release flow.
 - [Development guide](docs/DEVELOPMENT.md) — pre-commit hooks, CI, and test coverage.
 - [API / module reference](docs/API.md) — internal architecture for contributors.

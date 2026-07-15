@@ -18,7 +18,8 @@ src/
 ├── capabilities/      Dynamic capability derivation + persistent registry
 │   ├── mod.rs         Capability type
 │   ├── derive.rs      Parse `az [<group>] --help` into capabilities
-│   └── registry.rs    CapabilityRegistry: lookup, suggest, help_text, cache I/O
+│   ├── registry.rs    CapabilityRegistry: lookup, suggest, help_text, cache I/O
+│   └── autodiscover.rs  Startup auto-discovery of new `az` groups (see below)
 ├── agent/
 │   └── mod.rs         IntentResolver + Adapter trait + offline MockAdapter
 ├── dungeon/
@@ -319,6 +320,34 @@ Dynamic derivation and persistence of AzZork's runtime vocabulary.
   `suggest`, `groups`, `help_text`, and dependency-free `load`/`save` to a
   tab-separated cache (`default_cache_path()` honours `AZORK_CACHE_DIR` /
   `XDG_DATA_HOME`).
+- **`autodiscover` module** — pure, synchronous, offline-testable functions
+  driving startup auto-discovery (a background thread in `main.rs` wraps the
+  streaming variant; see [Auto-Discovery guide](AUTODISCOVERY.md) for the
+  player-facing behavior):
+  - **`AUTODISCOVER_ENV`** / **`autodiscover_enabled() -> bool`** — the
+    `AZORK_AUTODISCOVER` opt-out (`0`/`false`/`no`, case-insensitive).
+  - **`struct GroupResult { group: String, outcome: Result<Vec<Capability>, String> }`**
+    — the outcome of attempting to learn one group.
+  - **`struct AppliedGroup { group: String, result: Result<usize, String> }`**
+    — the outcome of folding one `GroupResult` into a registry (added-count or
+    error).
+  - **`discover_new_groups(runner: &dyn AzRunner, known_groups: &[String]) -> Result<Vec<String>, String>`**
+    — runs `az --help`, returns the top-level groups not already in
+    `known_groups`.
+  - **`learn_groups(runner: &dyn AzRunner, groups: &[String]) -> Vec<GroupResult>`**
+    — runs `az <group> --help` for each group via `derive::derive_group_capabilities`,
+    one `GroupResult` per group.
+  - **`run_startup_autodiscovery(runner: &dyn AzRunner, known_groups: &[String]) -> Vec<GroupResult>`**
+    — synchronous convenience wrapper: `discover_new_groups` then
+    `learn_groups`; used directly in tests (no thread needed).
+  - **`apply_learned(registry: &mut CapabilityRegistry, results: impl IntoIterator<Item = GroupResult>) -> Vec<AppliedGroup>`**
+    — folds a batch of `GroupResult`s into `registry`, returning one
+    `AppliedGroup` per input.
+  - **`stream_startup_autodiscovery(runner: &dyn AzRunner, known_groups: &[String], cancel: &AtomicBool, tx: &Sender<GroupResult>)`**
+    — the production entry point: streams each `GroupResult` over `tx` as
+    soon as it's learned (so `main.rs` can apply capabilities incrementally
+    between turns) and checks `cancel` before/between groups so discovery
+    yields to player input.
 
 ## `agent` module
 
