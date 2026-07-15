@@ -14,20 +14,59 @@ src/
 ├── main.rs            REPL: banner, input loop, dispatch, y/N confirmation
 ├── parser.rs          Total input parser: text -> Command
 ├── world.rs           World model: rooms, resources, hazards, Grue, scoring
+├── az_runner.rs       AzRunner seam: the one place `az` is invoked
+├── capabilities/      Dynamic capability derivation + persistent registry
+│   ├── mod.rs         Capability type
+│   ├── derive.rs      Parse `az [<group>] --help` into capabilities
+│   └── registry.rs    CapabilityRegistry: lookup, suggest, help_text, cache I/O
+├── agent/
+│   └── mod.rs         IntentResolver + Adapter trait + offline MockAdapter
+├── memory/
+│   └── mod.rs         GraphMemory: dependency-free, ladybug-style persistent graph memory
+├── oit/                Outside-In-Testing agent library core (pure, offline-testable)
+│   ├── mod.rs         Module wiring
+│   ├── guardrails.rs  Cost gate, ownership/cleanup tagging, isolation rules
+│   ├── usecases.rs    Use-case catalog + friction detection
+│   └── report.rs      Markdown friction-report rendering
+├── bin/
+│   └── azork-oit.rs   Live OIT driver binary: preflight, create/exercise/teardown
 └── backend/
     ├── mod.rs         Backend trait + select()
     ├── mock.rs        Default offline synthetic world
-    └── az.rs          Optional read-only live-Azure world (shells out to `az`)
+    └── az.rs          Optional read-only live-Azure world (driven via AzRunner, with
+                        timeout/zombie-process/pipe-deadlock hardening)
 ```
 
+Two **optional companion crates** live alongside the root package but are never
+compiled by `cargo build`/`cargo test` at the repo root (no `[workspace]` table,
+so they are fully opt-in):
+
+- [`agentic-bridge/`](../agentic-bridge/README.md) — bridges AzZork's
+  `CapabilityRegistry` into the `recipe-runner-rs` agentic engine via an
+  `AzorkAdapter`.
+- [`memory-store/`](../memory-store/README.md) — mirrors `GraphMemory` into a
+  durable, SQLite-backed `amplihack-memory` store (`PersistentStore`).
+
+The Azure CLI extension under [`azext/`](../azext/README.md) (`azext_azork`) is
+pure Python and lives outside the Rust crate graph entirely; it shells out to
+the compiled `azork` binary.
+
 Data flows one way at startup: a `Backend` **builds** a `World`; thereafter the
-REPL parses input into `Command`s and applies them to the `World`.
+REPL parses input into `Command`s and applies them to the `World`. Unknown input
+is routed to the `agent::IntentResolver`, which consults the
+`capabilities::CapabilityRegistry` (grown at runtime via `learn`).
 
 ```
 input ──parser::parse──▶ Command ──main::handle──▶ World mutation ──▶ text out
-                                                     │
-Backend::build_world ────────────────────────────────┘ (once, at startup)
+                                     │                    ▲
+                                     ├─ Unknown ─▶ IntentResolver ─┘
+                                     └─ Learn ──▶ CapabilityRegistry ◀─ AzRunner ◀─ `az --help`
+Backend::build_world ────────────────────────────────────────────────┘ (once, at startup)
 ```
+
+All `az` access — both the live `AzBackend` and capability derivation — passes
+through the `AzRunner` trait, so tests inject a `FakeAzRunner` and never touch
+the real CLI or network.
 
 ## `parser` module
 
@@ -64,10 +103,12 @@ The full set of parsed commands. Derives `Debug, Clone, PartialEq, Eq`.
 | `Inventory` | List carried resources. |
 | `Score` | Report governance posture. |
 | `Cast(String)` | Cast a spell (currently `deploy [template]`). |
-| `Help` | Show help. |
+| `Learn(String)` | Introspect `az <group> --help` and grow the capability registry. |
+| `Capabilities` | List the `az` capabilities learned so far. |
+| `Help` | Show help (built-in verbs plus learned capabilities). |
 | `Quit` | Leave the game. |
 | `Empty` | Player entered nothing. |
-| `Unknown(String)` | Unrecognized input; carries the original text. |
+| `Unknown(String)` | Unrecognized input; routed to the `IntentResolver` rather than rejected. |
 
 ### `fn parse`
 
@@ -207,10 +248,112 @@ Builds the fixed offline world (see
 
 ### `struct AzBackend`
 
-Builds a world from the live subscription via read-only `az` calls.
+Builds a world from the live subscription via read-only `az` calls, all routed
+through an injected `AzRunner` (`AzBackend::new()` uses `ProcessAzRunner`;
+`AzBackend::with_runner(..)` accepts any runner, e.g. `FakeAzRunner` in tests).
 `name()` → `"az (live Azure)"`. See
 [the `az` backend](CONFIGURATION.md#the-az-backend-live-azure) for the exact
 commands and safety guarantees.
+
+## `az_runner` module
+
+The single seam through which AzZork ever invokes the `az` CLI.
+
+```rust
+pub trait AzRunner {
+    fn run(&self, args: &[&str]) -> std::io::Result<std::process::Output>;
+}
+```
+
+- **`ProcessAzRunner`** — production impl; shells out to `az` on `PATH`.
+- **`FakeAzRunner`** — test impl; returns canned `(stdout, success)` keyed by the
+  exact argument vector (`.with(...)` / `.with_failure(...)`).
+
+## `capabilities` module
+
+Dynamic derivation and persistence of AzZork's runtime vocabulary.
+
+- **`struct Capability`** — `{ group, verb, summary, command_path, status }`;
+  helpers `key()`, `az_args()`, `help_line()`.
+- **`derive::derive_groups` / `derive::derive_group_capabilities`** — parse
+  `az --help` / `az <group> --help` (folds wrapped summaries, extracts
+  `[Preview]`-style status tags).
+- **`registry::CapabilityRegistry`** — `learn_group`, `get`, `find_by_verb`,
+  `suggest`, `groups`, `help_text`, and dependency-free `load`/`save` to a
+  tab-separated cache (`default_cache_path()` honours `AZORK_CACHE_DIR` /
+  `XDG_DATA_HOME`).
+
+## `agent` module
+
+Agentic resolution of unknown/ambiguous intent — AzZork never dead-ends.
+
+- **`trait Adapter`** — `resolve(&self, input, &CapabilityRegistry) -> Resolution`.
+- **`struct MockAdapter`** — deterministic, offline adapter that ranks learned
+  capabilities against the input.
+- **`enum Resolution`** — `Verb` | `Suggestions` | `Unresolved`, each with
+  `narrate()`.
+- **`IntentResolver<A: Adapter>`** — ties an adapter to a registry; never fails.
+
+The recipe-runner-backed `AzorkAdapter` in the optional
+[`agentic-bridge`](../agentic-bridge/README.md) companion crate implements this
+same `Adapter` trait as a drop-in, richer alternative to `MockAdapter`.
+
+## `memory` module
+
+Dependency-free persistent graph memory, accumulated across sessions.
+
+- **`struct GraphMemory`** — typed nodes (`room`, `object`, `verb`, `intent`,
+  `friction`) with importance/usage weighting; `record`, `touch`, `recall`,
+  `summary`.
+- **`load()` / `save()`** — line-based, dependency-free on-disk format under
+  `~/.local/share/azork/memory.graph` (honours `AZORK_CACHE_DIR` /
+  `XDG_DATA_HOME`, mirroring the capability cache).
+- Recalled at startup (banner shows `[memory: recalled N remembered nodes]`) and
+  updated as the game and OIT agent play.
+
+The optional [`memory-store`](../memory-store/README.md) companion crate's
+`PersistentStore` mirrors every `GraphMemory` node **and edge** into a durable,
+SQLite-backed `amplihack-memory` store, adding full-text ranked recall — see
+its README for the node → `Experience` field mapping.
+
+## `oit` module (Outside-In-Testing agent core)
+
+A pure, fully offline-testable library that backs the live `azork-oit` binary
+(`src/bin/azork-oit.rs`). Kept separate from the binary so every safety rule and
+heuristic is exercised in unit tests with no `az` calls and no network.
+
+- **`guardrails` submodule** — the mission's hard safety contract, enforced in
+  code, not just convention:
+  - `assess_cost(est_monthly_usd) -> CostDecision` — rejects untrusted
+    (negative/NaN) and over-cap (`COST_CAP_USD = $500`) estimates; every create
+    in the live binary is gated on this before any `az` call.
+  - `oit_tags(ttl_epoch)` / `tag_args(ttl_epoch)` — canonical
+    `azork-oit=1`, `owner=azork-oit`, `ttl=<epoch>` tag set applied to every
+    created resource.
+  - `is_own_resource(tags)` / `guard_mutation(tags)` — refuses to mutate or
+    delete anything not carrying the agent's own tags.
+  - `oit_rg_name(suffix)` / `is_oit_rg(name)` — enforces the `azork-oit-*`
+    resource-group naming/isolation convention.
+  - `CheapResource` — the curated catalog (`ResourceGroup`, `StorageStandardLrs`)
+    of resource kinds the agent is allowed to create, each with a conservative
+    cost estimate; extending this catalog with pricier kinds requires feeding a
+    real price estimate into `assess_cost` to keep the cap meaningful.
+- **`usecases` submodule** — `catalog()` (a broad, categorised set of scenarios:
+  navigation, examination, creation, security, governance, deployment,
+  discovery, memory) and `detect_friction(command, output)`, a pure function
+  classifying azork's response as `Unresolved`, `Empty`, `MissingCapability`, or
+  `ConfusingMessage` friction (or none).
+- **`report` submodule** — `ReportData` / `UseCaseRun`, rendered via
+  `to_markdown()` into the friction report written by `azork-oit` (see
+  [`docs/oit-friction-report.md`](oit-friction-report.md) for a sample).
+
+The `azork-oit` binary itself (`src/bin/azork-oit.rs`) is a thin live driver:
+subscription/tenant **preflight** (overridable with `AZORK_OIT_SUBSCRIPTION` /
+`AZORK_OIT_TENANT`, see the [Configuration reference](CONFIGURATION.md)),
+guardrailed create → drive the `catalog()` use cases against the real `azork`
+binary over stdin/stdout → verified teardown → friction-report write. It has no
+runtime dependencies of its own beyond the standard library and the `az` CLI on
+`PATH`.
 
 ## `main` (REPL)
 
@@ -223,12 +366,16 @@ Entry point and orchestration. Responsibilities:
 - Prompt for **y/N** confirmation on `take` and `drop` (default No).
 - Implement the `cast deploy [template]` spell as a mock, credential-free
   deployment narration.
+- Handle `learn`/`capabilities`, append learned capabilities to `help`, and route
+  `Unknown` input through the `IntentResolver` (never a hard failure).
 
 ## Testing
 
-The suite has **108 tests**: unit tests colocated with each module under
-`#[cfg(test)]`, plus external contract/integration tests in `tests/` that drive
-the public API of the `azork` library crate.
+The root crate's suite has **274 tests** (unit tests colocated with each module
+under `#[cfg(test)]`, plus external contract/integration tests in `tests/` that
+drive the public API of the `azork` library crate and the `azork-oit` binary's
+library core). Counts drift as the suite grows — re-run `cargo test --all` for
+the exact current total.
 
 Colocated unit tests:
 
@@ -241,6 +388,13 @@ Colocated unit tests:
   room, seeds fixable hazards, and is fully winnable to a perfect **100/100**.
 - **`main.rs`** — `cast deploy` is mock-safe, unknown spells are rejected, and
   the confirmation helper reads yes / defaults to no on EOF.
+- **`memory/mod.rs`** — node recording, recall ranking, on-disk round-trip.
+- **`oit/guardrails.rs`** — cost-gate boundaries (cap, cheap threshold,
+  untrusted estimates), tag composition, resource-group naming/isolation,
+  ownership-gated mutation.
+- **`oit/usecases.rs`** — catalog breadth/uniqueness/category coverage, and
+  every `detect_friction` classification (including the "deploy flavour text is
+  not friction" false-positive guard) and prompt-splitting alignment.
 
 External test files (in `tests/`, exercising the public contract):
 
@@ -253,11 +407,63 @@ External test files (in `tests/`, exercising the public contract):
   winnable playthrough, and credential-free `az` backend construction.
 - **`integration_tests.rs`** — end-to-end sessions parsing raw input and
   dispatching commands against a live world.
+- **`evolution_tests.rs`** — self-evolution: deriving a brand-new capability with
+  no code edit, persistence/recall across sessions, non-failing intent
+  resolution, and driving `AzBackend` from a `FakeAzRunner` — all offline.
+- **`memory_tests.rs`** — `GraphMemory` persistence, recall ranking, and
+  cross-session accumulation via the public API.
+- **update_*.rs** (`update_startup_tests.rs`, `update_stamp_tests.rs`,
+  `update_archive_tests.rs`, `update_pure_tests.rs`,
+  `update_resolve_tests.rs`, `update_checksum_tests.rs`) — the self-update
+  mechanism: startup gating, version stamps, archive extraction, checksum
+  verification, and release-asset resolution, all against fixtures/fakes (no
+  network).
 
-No test invokes the `az` backend's `build_world`, so the suite runs with zero
-credentials.
+No test invokes the real `az` CLI (everything goes through `FakeAzRunner`) or the
+`az` backend against a live subscription, so the suite runs with zero
+credentials. Similarly, no test in `tests/` or `src/` invokes the live
+`azork-oit` binary against a real subscription — its guardrails and friction
+heuristics are exercised entirely through the pure `oit` module's unit tests.
+
+### Companion-crate tests (opt-in, not run by `cargo test` at the repo root)
+
+- `(cd agentic-bridge && cargo test)` — `AzorkAdapter` intent resolution against
+  a `CapabilityRegistry`, and `run_intent_recipe` executing
+  `INTENT_RESOLUTION_RECIPE` end-to-end (requires `amplihack-recipe-runner`
+  checked out as a sibling; see [`agentic-bridge/README.md`](../agentic-bridge/README.md)).
+- `(cd memory-store && cargo test)` — `PersistentStore::save`/`load`/`recall`
+  round-tripping a `GraphMemory` (nodes and edges) through a real, temporary
+  SQLite-backed `amplihack-memory` store (requires `amplihack-memory-lib`
+  checked out as a sibling; see [`memory-store/README.md`](../memory-store/README.md)).
+
+### QA / outside-in product testing
+
+Full outside-in product testing of the new user-facing surfaces (runtime
+`az`-capability derivation, the `azork-oit` binary, and the `azext_azork` CLI
+extension) with the project's `gadugi-test` harness is currently **blocked**:
+`gadugi-test` is not installed in this environment. Until it is available, the
+interim QA evidence for these surfaces is:
+
+- `tests/evolution_tests.rs` — capability derivation/learning/persistence and
+  intent resolution, driven end-to-end against a `FakeAzRunner`.
+- `tests/memory_tests.rs` — graph-memory recall/persistence behaviour exercised
+  by the same paths the game and `azork-oit` use.
+- `tests/integration_tests.rs` and `tests/parser_tests.rs` — full session
+  workflows and command parsing that the OIT agent's use-case catalog and the
+  `az azork run` extension command both rely on.
+- `azork-oit --dry-run` itself, run against the mock backend, as a manual
+  outside-in smoke test of the OIT agent's own catalog before any live run.
+
+**Action required before closing the QA phase:** this interim evidence is a
+substitute, not a replacement, for a `gadugi-test` run. The parent
+orchestration must either (a) install `gadugi-test` and execute it against
+these three surfaces, or (b) explicitly and formally accept the interim
+evidence above as sufficient. Do not treat this section as closing the QA
+phase on its own.
 
 ```bash
 cargo build      # compiles cleanly, no warnings
-cargo test       # 108 tests, all passing
+cargo test --all # 274 tests, all passing
+cargo clippy --all-targets --all-features -- -D warnings
+cargo fmt --all -- --check
 ```

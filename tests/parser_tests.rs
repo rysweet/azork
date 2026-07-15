@@ -104,6 +104,9 @@ fn help_and_quit_aliases() {
     for verb in ["quit", "q", "exit"] {
         assert_eq!(parse(verb), Command::Quit, "verb `{verb}`");
     }
+    for verb in ["version", "ver"] {
+        assert_eq!(parse(verb), Command::Version, "verb `{verb}`");
+    }
 }
 
 // --- directions -----------------------------------------------------------

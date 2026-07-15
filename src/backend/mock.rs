@@ -137,7 +137,7 @@ impl Backend for MockBackend {
         .with_resource(orphan);
 
         let rooms = vec![landing, web, data, identity, unmon];
-        Ok(World::new(rooms, "landing-rg", "Contoso-Dev (mock)"))
+        World::new(rooms, "landing-rg", "Contoso-Dev (mock)")
     }
 }
 

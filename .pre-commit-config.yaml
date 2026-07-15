@@ -10,6 +10,10 @@ repos:
 
   - repo: local
     hooks:
+      # Auto-fixes formatting locally (better DX than failing the commit);
+      # `ci.yml` runs `cargo fmt --all -- --check` as the actual gate, so a
+      # contributor who skips this hook still gets caught in CI. Intentional
+      # divergence, not an oversight.
       - id: cargo-fmt
         name: cargo fmt
         entry: cargo fmt --all --

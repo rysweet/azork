@@ -1,0 +1,24 @@
+[package]
+name = "azork-memory-store"
+version = "0.2.0"
+edition = "2021"
+description = "Optional companion crate: durable graph memory for AzZork backed by amplihack-memory."
+license = "MIT"
+publish = false
+
+# This crate is DELIBERATELY separate from the azork package so that azork's own
+# `cargo build`/`cargo test` stay zero-dependency, offline, and green on a fresh
+# clone. Cargo resolves path/optional dependencies even when a feature is off, so
+# pulling `amplihack-memory` (which compiles bundled SQLite) into the azork
+# manifest would break the offline fresh-clone build. Building this crate is
+# opt-in and requires the sibling reference repos to be checked out side-by-side
+# (the canonical `~/src/{azork,amplihack-memory-lib}` layout). azork has no
+# `[workspace]`, so `cargo build` at the azork root never compiles this crate.
+
+[dependencies]
+azork = { path = ".." }
+amplihack-memory = { path = "../../amplihack-memory-lib/rust/amplihack-memory" }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

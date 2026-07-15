@@ -1,7 +1,9 @@
 # AzZork Tutorial: Harden the Estate
 
 This walkthrough takes you from your first `look` to the coveted **Cloud
-Guardian** rank, all in the offline mock dungeon — no Azure account required.
+Guardian** rank, all in the offline mock dungeon — no Azure account required. A
+closing bonus (§8) shows AzZork *teaching itself* new `az` verbs; that part uses
+the real `az` CLI, but everything up to your Cloud Guardian rank is fully offline.
 
 If you just want a command reference, see the [Usage guide](USAGE.md). For how
 backends work, see the [Configuration reference](CONFIGURATION.md).
@@ -279,6 +281,76 @@ You step back through the portal.
 Governance posture: 100/100  —  rank: Cloud Guardian
 ...
 ```
+
+## 8. Teach AzZork new powers (self-evolution)
+
+AzZork's vocabulary is not frozen. It **derives** verbs from the real `az` CLI
+and remembers them across sessions — the game grows as you play. You can meet
+this system entirely from the mock dungeon.
+
+Ask what AzZork knows on a fresh game and it admits it has learned nothing yet:
+
+```
+az> capabilities
+AzZork has learned no az capabilities yet. Try 'learn group' or 'learn storage'
+to teach it (requires the real 'az' CLI).
+```
+
+Because it has learned nothing, unfamiliar input isn't rejected outright — the
+**intent resolver** simply nudges you toward learning more:
+
+```
+az> make me a storage account
+The incantation "make me a storage account" stirs nothing yet. Try
+'learn <group>' to discover new powers, or 'help'.
+```
+
+Now teach it. `learn <group>` shells out to `az <group> --help`, parses the
+command list, and folds every discovered command into AzZork's registry as a new
+verb — **no code change required**. This step needs the real `az` CLI on your
+`PATH`; if it's missing, `learn` says so rather than crashing:
+
+```
+az> learn group
+You study the 'group' grimoire. AzZork learns 8 new az power(s); 8 known in
+total. (remembered in ~/.local/share/azork/capabilities.tsv)
+```
+
+Everything learned is written to a small cache file
+(`~/.local/share/azork/capabilities.tsv` by default; honours `XDG_DATA_HOME`,
+override with `AZORK_CACHE_DIR`). `capabilities` (aliases `caps`, `powers`,
+`spells`) now lists them, and `help` grows to include them:
+
+```
+az> capabilities
+AzZork has learned 8 az capabilities across 1 groups:
+Discovered az capabilities (learned at runtime):
+ [group]
+  create         az group create — Create a new resource group.
+  list           az group list — List resource groups.
+  ...
+```
+
+With those powers learned, the intent resolver stops nudging and starts helping.
+The same kind of free-text input now finds a confident match — or offers a "did
+you mean…" list when several capabilities fit:
+
+```
+az> create a group
+You reach for the 'create' rite (az group create). Create a new resource group.
+```
+
+Best of all, the knowledge **persists**. Quit and relaunch, and AzZork recalls
+what it learned before the banner even fades:
+
+```
+[memory: recalled 8 learned az capabilities from ~/.local/share/azork/capabilities.tsv]
+```
+
+Teach it a few more groups (`learn storage`, `learn vm`, …) and AzZork steadily
+becomes fluent in your slice of Azure — no recompile, no hand-maintained command
+table. For the full reference, see
+[Self-evolution in the Usage guide](USAGE.md#self-evolution-learn-and-capabilities).
 
 ## Where to next?
 

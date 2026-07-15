@@ -8,11 +8,11 @@
 //! (`-o tsv`) with narrow `--query` projections and parse the plain text.
 
 use super::Backend;
+use crate::az_runner::{AzRunner, ProcessAzRunner};
 use crate::parser::Direction;
 use crate::secrets::scrub;
 use crate::world::{Resource, Room, World};
 use std::io::ErrorKind;
-use std::process::Command;
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -22,11 +22,59 @@ const MAX_ATTEMPTS: u32 = 3;
 const BASE_BACKOFF: Duration = Duration::from_millis(400);
 
 /// Backend that queries the real Azure control plane via `az`.
-pub struct AzBackend;
+///
+/// All CLI invocation goes through an injected [`AzRunner`], so tests can drive
+/// this backend with canned output instead of the real `az` binary.
+///
+/// On real subscriptions the resource-group count can be in the hundreds, and a
+/// naive "list every group, then list every group's resources" walk issues
+/// *O(groups)* sequential `az` calls — minutes of latency. To stay responsive
+/// the backend is **bounded**: it builds at most [`AzBackend::max_rooms`] rooms
+/// and only eagerly enumerates resources for the first
+/// [`AzBackend::max_resource_rooms`] of them. Both bounds are configurable via
+/// the `AZORK_MAX_ROOMS` / `AZORK_MAX_RESOURCE_ROOMS` environment variables.
+pub struct AzBackend {
+    runner: Box<dyn AzRunner>,
+    /// Maximum number of resource groups mapped into rooms.
+    max_rooms: usize,
+    /// Maximum number of rooms whose resources are enumerated during build.
+    max_resource_rooms: usize,
+}
+
+/// Default cap on rooms built from a live subscription.
+const DEFAULT_MAX_ROOMS: usize = 40;
+/// Default cap on rooms whose resources are eagerly enumerated.
+const DEFAULT_MAX_RESOURCE_ROOMS: usize = 8;
 
 impl AzBackend {
+    /// Construct a backend that shells out to the real `az` CLI, taking room
+    /// bounds from the environment (falling back to sane defaults).
     pub fn new() -> AzBackend {
-        AzBackend
+        AzBackend::with_runner(Box::new(ProcessAzRunner::new()))
+    }
+
+    /// Construct a backend over an arbitrary [`AzRunner`] (used by tests), with
+    /// bounds read from the environment.
+    pub fn with_runner(runner: Box<dyn AzRunner>) -> AzBackend {
+        AzBackend {
+            runner,
+            max_rooms: env_cap("AZORK_MAX_ROOMS", DEFAULT_MAX_ROOMS),
+            max_resource_rooms: env_cap("AZORK_MAX_RESOURCE_ROOMS", DEFAULT_MAX_RESOURCE_ROOMS),
+        }
+    }
+
+    /// Construct a backend with explicit bounds (used by tests to assert the
+    /// caps without touching process-global environment variables).
+    pub fn with_runner_and_caps(
+        runner: Box<dyn AzRunner>,
+        max_rooms: usize,
+        max_resource_rooms: usize,
+    ) -> AzBackend {
+        AzBackend {
+            runner,
+            max_rooms: max_rooms.max(1),
+            max_resource_rooms,
+        }
     }
 
     /// Run an `az` invocation with bounded retries and exponential backoff.
@@ -54,9 +102,19 @@ impl AzBackend {
     }
 
     /// Perform a single `az` invocation. Returns `(message, retryable)` on error.
+    ///
+    /// Delegates the actual process launch to `self.runner`, which (via
+    /// [`crate::az_runner::ProcessAzRunner`] in production) applies a hard
+    /// wall-clock timeout, zombie-process cleanup, and pipe-deadlock
+    /// protection — see that module for the details. Tests inject a
+    /// `FakeAzRunner` so no real `az` binary or hardening path is exercised.
     fn run_once(&self, args: &[&str]) -> Result<String, (String, bool)> {
-        let output = Command::new("az").args(args).output().map_err(|e| {
-            // A missing binary is never transient; other spawn errors might be.
+        let output = self.runner.run(args).map_err(|e| {
+            // A timeout is always worth retrying; a missing binary never is;
+            // other spawn errors might be.
+            if e.kind() == ErrorKind::TimedOut {
+                return (e.to_string(), true);
+            }
             let retryable = e.kind() != ErrorKind::NotFound;
             (
                 format!("failed to launch 'az' (is it installed & on PATH?): {}", e),
@@ -83,24 +141,6 @@ impl AzBackend {
 /// `println!`/`eprintln!` or be persisted.
 fn format_az_error(args: &[&str], stderr: &str) -> String {
     format!("'az {}' failed: {}", args.join(" "), scrub(stderr.trim()))
-}
-
-/// Parse `name<TAB>location` (or `name<TAB>anything`) TSV lines into
-/// `(name, second_column)` pairs, skipping blank/malformed rows. Used for
-/// both resource-group (`name`, `location`) and resource (`name`, `type`)
-/// listings, which share the same two-column shape.
-fn parse_name_value_tsv(raw: &str, default_value: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for line in raw.lines() {
-        let mut cols = line.split('\t');
-        if let Some(name) = cols.next() {
-            let value = cols.next().unwrap_or(default_value).to_string();
-            if !name.trim().is_empty() {
-                out.push((name.trim().to_string(), value.trim().to_string()));
-            }
-        }
-    }
-    out
 }
 
 /// Heuristic: decide whether an `az` stderr message describes a transient
@@ -146,10 +186,54 @@ fn is_transient(stderr: &str) -> bool {
     transient.iter().any(|t| s.contains(t))
 }
 
+/// Parse `az ... -o tsv` output for `[].{name:name,location:location}` into
+/// `(name, location)` pairs, skipping blank-name rows and defaulting a
+/// missing location column to `"unknown"`. Pure and offline-testable.
+fn parse_group_tsv(raw: &str) -> Vec<(String, String)> {
+    let mut groups = Vec::new();
+    for line in raw.lines() {
+        let mut cols = line.split('\t');
+        if let Some(name) = cols.next() {
+            let loc = cols.next().unwrap_or("unknown").to_string();
+            if !name.trim().is_empty() {
+                groups.push((name.trim().to_string(), loc.trim().to_string()));
+            }
+        }
+    }
+    groups
+}
+
+/// Parse `az ... -o tsv` output for `[].{name:name,type:type}` into
+/// `(name, type)` pairs, skipping blank-name rows and defaulting a missing
+/// type column to `"resource"`. Pure and offline-testable.
+fn parse_resource_tsv(raw: &str) -> Vec<(String, String)> {
+    let mut resources = Vec::new();
+    for line in raw.lines() {
+        let mut cols = line.split('\t');
+        if let Some(rname) = cols.next() {
+            let rtype = cols.next().unwrap_or("resource").to_string();
+            if !rname.trim().is_empty() {
+                resources.push((rname.trim().to_string(), rtype.trim().to_string()));
+            }
+        }
+    }
+    resources
+}
+
 impl Default for AzBackend {
     fn default() -> Self {
         AzBackend::new()
     }
+}
+
+/// Read a positive `usize` cap from an environment variable, falling back to
+/// `default` when unset, empty, unparseable, or zero.
+fn env_cap(var: &str, default: usize) -> usize {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(default)
 }
 
 impl Backend for AzBackend {
@@ -158,11 +242,17 @@ impl Backend for AzBackend {
     }
 
     fn build_world(&self) -> Result<World, String> {
-        // Current subscription name (best-effort).
+        // Current subscription name (best-effort). If this fails, log why —
+        // the very next `az` call below will likely fail for the same reason
+        // (e.g. not logged in) with a more actionable message, but we don't
+        // want the "unknown-subscription" placeholder to be a silent mystery.
         let subscription = self
             .run(&["account", "show", "--query", "name", "-o", "tsv"])
             .map(|s| s.trim().to_string())
-            .unwrap_or_else(|_| "unknown-subscription".to_string());
+            .unwrap_or_else(|e| {
+                eprintln!("warning: could not determine current subscription: {e}");
+                "unknown-subscription".to_string()
+            });
 
         // Resource groups become rooms.
         let groups_raw = self.run(&[
@@ -173,8 +263,7 @@ impl Backend for AzBackend {
             "-o",
             "tsv",
         ])?;
-
-        let groups = parse_name_value_tsv(&groups_raw, "unknown");
+        let mut groups = parse_group_tsv(&groups_raw);
 
         if groups.is_empty() {
             return Err(
@@ -184,13 +273,28 @@ impl Backend for AzBackend {
             );
         }
 
+        // Bound the walk: on large subscriptions (hundreds of groups) mapping
+        // every group — and listing every group's resources — is minutes of
+        // sequential `az` calls. Cap the number of rooms so the game is
+        // responsive; note the truncation so the player knows more exists.
+        let total_groups = groups.len();
+        let truncated = total_groups > self.max_rooms;
+        groups.truncate(self.max_rooms);
+
         // Build rooms, chaining them north<->south so the estate is navigable.
         let mut rooms: Vec<Room> = Vec::new();
         for (i, (gname, location)) in groups.iter().enumerate() {
+            let desc = if truncated && i == 0 {
+                format!(
+                    "Resource group '{}' in {}. (Showing {} of {} resource groups; \
+                     set AZORK_MAX_ROOMS to see more.)",
+                    gname, location, self.max_rooms, total_groups
+                )
+            } else {
+                format!("Resource group '{}' in {}.", gname, location)
+            };
             let mut room = Room::new(
-                gname,
-                &format!("Resource group '{}' in {}.", gname, location),
-                location,
+                gname, &desc, location,
                 true, // assume monitored; we can't cheaply prove otherwise
             );
             if i > 0 {
@@ -200,23 +304,28 @@ impl Backend for AzBackend {
                 room = room.with_exit(Direction::North, &groups[i + 1].0);
             }
 
-            // Resources in this group become objects.
-            if let Ok(res_raw) = self.run(&[
-                "resource",
-                "list",
-                "-g",
-                gname,
-                "--query",
-                "[].{name:name,type:type}",
-                "-o",
-                "tsv",
-            ]) {
-                for (rname, rtype) in parse_name_value_tsv(&res_raw, "resource") {
-                    room = room.with_resource(Resource::new(
-                        &rname,
-                        &rtype,
-                        &format!("A live {} named {}.", rtype, rname),
-                    ));
+            // Resources are enumerated only for the first `max_resource_rooms`
+            // rooms — one `az resource list` per room is the dominant cost, so we
+            // bound it. Rooms beyond the cap are still navigable; their contents
+            // are simply not pre-listed.
+            if i < self.max_resource_rooms {
+                if let Ok(res_raw) = self.run(&[
+                    "resource",
+                    "list",
+                    "-g",
+                    gname,
+                    "--query",
+                    "[].{name:name,type:type}",
+                    "-o",
+                    "tsv",
+                ]) {
+                    for (rname, rtype) in parse_resource_tsv(&res_raw) {
+                        room = room.with_resource(Resource::new(
+                            &rname,
+                            &rtype,
+                            &format!("A live {} named {}.", rtype, rname),
+                        ));
+                    }
                 }
             }
 
@@ -224,13 +333,59 @@ impl Backend for AzBackend {
         }
 
         let start = rooms[0].name.clone();
-        Ok(World::new(rooms, &start, &subscription))
+        World::new(rooms, &start, &subscription)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::az_runner::FakeAzRunner;
+
+    #[test]
+    fn parse_group_tsv_parses_name_and_location() {
+        let raw = "landing-rg\teastus\nhub-rg\twestus\n";
+        let groups = parse_group_tsv(raw);
+        assert_eq!(
+            groups,
+            vec![
+                ("landing-rg".to_string(), "eastus".to_string()),
+                ("hub-rg".to_string(), "westus".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_group_tsv_defaults_missing_location_and_skips_blank_names() {
+        let raw = "solo-rg\n\t\n   \teastus\n";
+        let groups = parse_group_tsv(raw);
+        // "solo-rg" has no second column -> defaults to "unknown".
+        // A line with an empty/whitespace-only name is skipped entirely.
+        assert_eq!(groups, vec![("solo-rg".to_string(), "unknown".to_string())]);
+    }
+
+    #[test]
+    fn parse_resource_tsv_parses_name_and_type() {
+        let raw = "storage1\tMicrosoft.Storage/storageAccounts\n";
+        let resources = parse_resource_tsv(raw);
+        assert_eq!(
+            resources,
+            vec![(
+                "storage1".to_string(),
+                "Microsoft.Storage/storageAccounts".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_resource_tsv_defaults_missing_type_and_skips_blank_names() {
+        let raw = "lonely-resource\n\t\n";
+        let resources = parse_resource_tsv(raw);
+        assert_eq!(
+            resources,
+            vec![("lonely-resource".to_string(), "resource".to_string())]
+        );
+    }
 
     #[test]
     fn throttling_and_5xx_are_transient() {
@@ -265,9 +420,10 @@ mod tests {
         // interpolation happens anywhere on this path.
         let hostile = "rg; rm -rf / #`whoami`$(id)";
         let args = ["group", "show", "-n", hostile];
-        // `run_once` always calls `Command::new("az").args(args)`, i.e. the
+        // `run_once` always calls `self.runner.run(args)`, which for
+        // `ProcessAzRunner` calls `Command::new("az").args(args)`, i.e. the
         // exact slice below, with no string concatenation in between.
-        let mut cmd = Command::new("az");
+        let mut cmd = std::process::Command::new("az");
         cmd.args(args);
         let collected: Vec<String> = cmd
             .get_args()
@@ -294,10 +450,10 @@ mod tests {
     #[test]
     fn build_world_handles_malformed_tsv_without_panicking() {
         // Lines with missing columns, empty names, or stray tabs must not
-        // panic. This calls the real `parse_name_value_tsv` helper used by
+        // panic. This calls the real `parse_group_tsv` helper used by
         // `build_world` directly.
         let malformed = "\n\t\tunnamed\n\tlocation-only\ngoodname\tgoodloc\n\t\t\t\t";
-        let groups = parse_name_value_tsv(malformed, "unknown");
+        let groups = parse_group_tsv(malformed);
         assert!(groups.iter().any(|(n, _)| n == "goodname"));
     }
 
@@ -314,5 +470,50 @@ mod tests {
         let scrubbed = scrub(hostile_stdout);
         assert!(!scrubbed.contains("SGVsbG8gV29ybGQh"));
         assert!(scrubbed.contains("my-rg"));
+    }
+
+    /// A live subscription with more groups than the room cap must not build a
+    /// room per group, and must only enumerate resources up to the resource cap.
+    #[test]
+    fn build_world_bounds_rooms_and_resource_calls() {
+        // Five groups; caps of 3 rooms and 1 resource-enumerated room.
+        let groups_tsv = "rg0\teastus\nrg1\teastus\nrg2\teastus\nrg3\teastus\nrg4\teastus";
+        let runner = FakeAzRunner::new()
+            .with(&["account", "show", "--query", "name", "-o", "tsv"], "sub")
+            .with(
+                &[
+                    "group",
+                    "list",
+                    "--query",
+                    "[].{name:name,location:location}",
+                    "-o",
+                    "tsv",
+                ],
+                groups_tsv,
+            )
+            // Only rg0's resources should ever be requested (resource cap = 1).
+            .with(
+                &[
+                    "resource",
+                    "list",
+                    "-g",
+                    "rg0",
+                    "--query",
+                    "[].{name:name,type:type}",
+                    "-o",
+                    "tsv",
+                ],
+                "store0\tMicrosoft.Storage/storageAccounts",
+            );
+
+        let backend = AzBackend::with_runner_and_caps(Box::new(runner), 3, 1);
+        let world = backend.build_world().expect("world builds within caps");
+
+        // Room cap honoured: 3 rooms, not 5.
+        assert_eq!(world.rooms_len(), 3);
+        // The starting room's truncation note mentions the total.
+        assert!(world.look().contains("of 5 resource groups"));
+        // rg0 has its resource; rg1/rg2 were never resource-listed (would have
+        // failed as unregistered fake calls if the cap were not honoured).
     }
 }

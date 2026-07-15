@@ -63,15 +63,29 @@ Pressing Ctrl-D (EOF) at any prompt ends the session gracefully.
 | `cast deploy [template]` | `deploy [template]` | Cast a deployment spell (mock bicep/ARM). | `az deployment group create` |
 | `inventory` | `i`, `inv` | List the resources you are carrying. | — |
 | `score` | — | Report your governance posture (0–100) and rank. | Governance posture |
-| `help` | `?`, `h` | Show the in-game command list. | — |
+| `learn <group>` | `discover`, `study` | Introspect `az <group> --help` and grow AzZork's vocabulary at runtime; learned verbs persist across sessions. | `az <group> --help` |
+| `capabilities` | `caps`, `powers`, `spells` | List the `az` capabilities AzZork has learned so far. | — |
+| `recall <query>` | `remember <query>` | Ranked recall over AzZork's persistent graph memory. | — |
+| `friction <note>` | — | Record something confusing or missing to improve later. | — |
+| `memory` | `mem`, `recollect` | Summarise what AzZork remembers (rooms, objects, verbs, intents, friction). | — |
+| `help` | `?`, `h` | Show the in-game command list (including learned capabilities). | — |
+| `version` | `ver` | Show the AzZork version. | — |
 | `quit` | `q`, `exit` | Leave the dungeon (prints your final score). | — |
 
-Unrecognized input returns a friendly hint rather than crashing:
+Unrecognized input never crashes and never dead-ends. Instead it is routed
+through AzZork's [intent resolver](#self-evolution-learn-and-capabilities), which
+tries to match your words against what it has learned. With nothing learned yet,
+you get a nudge toward `learn` and `help`:
 
 ```
 az> frobnicate the vm
-I don't understand "frobnicate the vm". Type 'help' for commands.
+The incantation "frobnicate the vm" stirs nothing yet. Try 'learn <group>' to
+discover new powers, or 'help'.
 ```
+
+Once AzZork has learned some `az` capabilities, the same input yields a confident
+match or a "did you mean…" list instead — see
+[Self-evolution](#self-evolution-learn-and-capabilities) below.
 
 ### Directions
 
@@ -240,3 +254,110 @@ perfect **100/100 — Cloud Guardian**.
 > spend, so only `resize` clears it. In the default mock estate the `sqlserver`
 > ($800/mo) is the one resource that needs right-sizing as well as locking; do
 > both and a perfect 100/100 run is achievable.
+
+## Self-evolution: `learn` and `capabilities`
+
+AzZork's verb set is not frozen. It **derives** capabilities from the real `az`
+CLI and remembers them across sessions.
+
+```text
+az> learn group
+You study the 'group' grimoire. AzZork learns 8 new az power(s); 8 known in
+total. (remembered in ~/.local/share/azork/capabilities.tsv)
+
+az> capabilities
+AzZork has learned 8 az capabilities across 1 groups:
+Discovered az capabilities (learned at runtime):
+ [group]
+  create         az group create — Create a new resource group.
+  list           az group list — List resource groups.
+  ...
+```
+
+- **`learn <group>`** shells out to `az <group> --help`, parses the command list,
+  and folds each discovered command into AzZork's capability registry as a new
+  verb — **no code change required**. This needs the real `az` CLI on `PATH`; if
+  it is missing, `learn` reports the problem instead of failing hard.
+- **Persistence.** Learned capabilities are written to a small cache file and
+  **recalled automatically on the next launch**. The default location is
+  `~/.local/share/azork/capabilities.tsv` (honouring `XDG_DATA_HOME`); set
+  `AZORK_CACHE_DIR` to override it.
+- **Adaptive help.** `help` appends everything learned so far, grouped by `az`
+  command group. `capabilities` (aliases `caps`, `powers`, `spells`) lists them.
+- **Intent resolution.** Any input that matches no built-in verb is not rejected
+  outright: AzZork ranks your words against its learned capabilities and either
+  acts on a confident match or offers a "did you mean…" list.
+
+## Outside-in-testing (OIT) agent
+
+`azork-oit` is a companion binary — not the game itself — that plays AzZork like
+a real user against a **live** Azure subscription, exercises a broad catalog of
+use cases (navigation, examination, scoring, securing, mock deployment, learned
+capabilities, memory recall), records anything confusing or missing as
+"friction", and writes a Markdown report.
+
+```bash
+cargo build --bin azork-oit
+./target/debug/azork-oit --dry-run                       # offline: no live az calls
+./target/debug/azork-oit                                  # live: guardrailed run
+./target/debug/azork-oit --report docs/oit-friction-report.md
+```
+
+Flags:
+
+| Flag | Effect |
+| --- | --- |
+| `--dry-run` | Drives azork's mock backend only; never touches a live subscription. |
+| `--report PATH` | Where to write the friction report (default `docs/oit-friction-report.md`). |
+
+Every live run is bound by hard guardrails enforced in code
+(`src/oit/guardrails.rs`), not merely by convention:
+
+1. **Cost gate** — every create is checked against a conservative estimate and
+   refused above the $500/mo cap (see [`Cost-gate note`](#cost-gate-note) below);
+   only free/cheap SKUs (resource groups, `Standard_LRS` storage) are ever
+   created.
+2. **Cleanup** — everything created is tagged `azork-oit=1`, `owner=azork-oit`,
+   `ttl=<epoch>` and torn down before the run ends; teardown is verified.
+3. **Non-destructive** — only resources bearing the agent's own tags are ever
+   mutated or deleted.
+4. **Isolation** — all live resources live in `azork-oit-*` resource groups in a
+   single cheap region (`eastus`).
+
+Preflight refuses to run against any subscription/tenant other than the one it
+expects — see [`AZORK_OIT_SUBSCRIPTION` / `AZORK_OIT_TENANT`](CONFIGURATION.md#azork-oit-outside-in-testing-agent-environment-variables)
+in the configuration reference for how to point it at your own tenant, and
+`AZORK_OIT_ISSUES` to cite tracked issues in the generated report.
+
+The output is a self-contained Markdown friction report (see
+[`docs/oit-friction-report.md`](oit-friction-report.md) for an example) listing
+use cases run, friction observed, resources created/torn down, and suggested
+improvements.
+
+#### Cost-gate note
+
+The cost gate only ever evaluates estimates drawn from a small, hard-coded
+catalog of known-cheap resource kinds (`CheapResource`), so the "$500 cap" is a
+genuine runtime bound today. If the catalog is ever extended with pricier SKUs,
+the estimate fed into the gate must come from a real pricing source (e.g. the
+retail-prices API) rather than a static guess, or the cap stops being a real
+safety property.
+
+## Azure CLI extension (`az azork`)
+
+AzZork also ships as a thin Azure CLI extension so you can play it as
+`az azork` alongside your other `az` commands. See
+[`azext/README.md`](../azext/README.md) for build/install instructions; once
+installed:
+
+```bash
+az azork play                          # interactive REPL, mock backend
+az azork play --backend az             # interactive REPL, live (read-only) backend
+az azork run --commands "look; score"  # non-interactive, prints narration
+az azork version                       # show the located azork binary + version
+```
+
+The extension is a pure-Python shim with **zero third-party install
+requirements** — it locates and shells out to the compiled `azork` binary (via
+`AZORK_BIN`, a bundled `bin/azork`, or `PATH`) and does not reimplement any game
+logic.
