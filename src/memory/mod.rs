@@ -152,6 +152,16 @@ impl GraphMemory {
     }
 
     /// Remember a node, returning its stable id.
+    ///
+    /// This is the single choke point through which every recorder
+    /// (`record_friction`, `record_intent`, `remember_capability`,
+    /// `remember_room`, `remember_resource`) creates a `MemoryNode`, and it
+    /// scrubs `label`/`content` via `crate::secrets::scrub` before the node
+    /// is inserted so that no secret-shaped text reaches in-memory state or
+    /// `save()`'s on-disk output. **Maintenance invariant:** any future
+    /// node-creation path must route through `remember()` rather than
+    /// constructing a `MemoryNode` directly — bypassing it would skip
+    /// scrubbing and reopen the gap tracked as issue #17.
     pub fn remember(
         &mut self,
         kind: MemoryKind,
