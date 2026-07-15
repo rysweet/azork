@@ -54,8 +54,6 @@ version / ver           show the AzZork version
 quit / q                leave the dungeon
 ```
 
-## Self-evolution 🌱
-
 AzZork does **not** ship a frozen, hand-maintained table of `az` commands.
 Instead it *derives* its vocabulary from the real CLI and grows as you play:
 
