@@ -316,27 +316,26 @@ fn drain_discovery(
     cache_path: &Path,
 ) {
     let mut learned_anything = false;
-    while let Ok(result) = rx.try_recv() {
-        for applied in autodiscover::apply_learned(registry, std::iter::once(result)) {
-            match applied.result {
-                Ok(added) if added > 0 => {
-                    learned_anything = true;
-                    for cap in registry.iter().filter(|c| c.group == applied.group) {
-                        memory.remember_capability(cap);
-                    }
-                    println!(
-                        "[autodiscover: learned {} new az power(s) from '{}'; {} known in total]",
-                        added,
-                        applied.group,
-                        registry.len()
-                    );
+    let results: Vec<autodiscover::GroupResult> = rx.try_iter().collect();
+    for applied in autodiscover::apply_learned(registry, results) {
+        match applied.result {
+            Ok(added) if added > 0 => {
+                learned_anything = true;
+                for cap in registry.iter().filter(|c| c.group == applied.group) {
+                    memory.remember_capability(cap);
                 }
-                Ok(_) => {}
-                Err(_e) => {
-                    // Discovery failures (e.g. `az` unavailable/unauthenticated)
-                    // are expected offline/in CI and shouldn't spam the player;
-                    // startup already succeeded via cache + built-ins.
-                }
+                println!(
+                    "[autodiscover: learned {} new az power(s) from '{}'; {} known in total]",
+                    added,
+                    applied.group,
+                    registry.len()
+                );
+            }
+            Ok(_) => {}
+            Err(_e) => {
+                // Discovery failures (e.g. `az` unavailable/unauthenticated)
+                // are expected offline/in CI and shouldn't spam the player;
+                // startup already succeeded via cache + built-ins.
             }
         }
     }
