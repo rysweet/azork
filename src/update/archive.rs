@@ -8,7 +8,14 @@
 
 use super::{Result, UpdateError};
 use flate2::read::GzDecoder;
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
+
+/// Hard cap on the *decompressed* size of the extracted binary. The download is
+/// already capped, but a compromised (yet checksum-consistent) release could
+/// declare an enormous tar entry; bounding the streamed output guards against
+/// disk-exhaustion decompression bombs.
+const MAX_EXTRACTED_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
 
 /// Returns `true` if `path` is safe to extract *within* a destination dir:
 /// it is relative and contains no `..` component.
@@ -79,12 +86,20 @@ pub fn extract_binary(archive_bytes: &[u8], binary_name: &str, dest_dir: &Path) 
 
         let dest = dest_dir.join(binary_name);
         // Stream the entry straight to disk rather than buffering the whole
-        // binary in memory first.
+        // binary in memory first, but bound the output so a malicious tar entry
+        // cannot exhaust the disk. Read one byte past the cap to detect overflow.
         let mut out = std::fs::File::create(&dest)
             .map_err(|e| UpdateError::Io(format!("create {}: {e}", dest.display())))?;
-        std::io::copy(&mut entry, &mut out).map_err(|e| {
+        let mut limited = entry.by_ref().take(MAX_EXTRACTED_BYTES + 1);
+        let written = std::io::copy(&mut limited, &mut out).map_err(|e| {
             UpdateError::Archive(format!("cannot extract {binary_name} from tar: {e}"))
         })?;
+        if written > MAX_EXTRACTED_BYTES {
+            let _ = std::fs::remove_file(&dest);
+            return Err(UpdateError::Archive(format!(
+                "extracted '{binary_name}' exceeded the {MAX_EXTRACTED_BYTES} byte cap"
+            )));
+        }
         set_executable(&dest)?;
         return Ok(dest);
     }
