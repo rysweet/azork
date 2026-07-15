@@ -400,6 +400,8 @@ Full documentation lives in [`docs/`](docs/):
 - [Self-Update guide](docs/UPDATING.md) — the `azork update` command, the cached startup check, security/trust model, and release flow.
 - [Development guide](docs/DEVELOPMENT.md) — pre-commit hooks, CI, and test coverage.
 - [API / module reference](docs/API.md) — internal architecture for contributors.
+- [Security policy](SECURITY.md) — threat model, guarantees, and how to report vulnerabilities.
+- [Security audit](docs/SECURITY-AUDIT.md) — findings, fixes, and verification results.
 
 ## License
 

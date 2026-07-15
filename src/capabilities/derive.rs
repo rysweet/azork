@@ -22,6 +22,7 @@
 
 use super::Capability;
 use crate::az_runner::AzRunner;
+use crate::secrets::scrub;
 
 /// One entry parsed out of a help section: a name, its optional lifecycle tag,
 /// and its (possibly reflowed) summary.
@@ -66,15 +67,25 @@ pub fn derive_group_capabilities(
 }
 
 /// Run `az <args>` and return trimmed stdout, or a friendly error string.
+///
+/// `az` help text is not expected to contain secrets, but this is the same
+/// seam ([`AzRunner::run`]) used by the live backend, and `az` extensions or
+/// future help text could in principle echo environment-influenced content.
+/// Both the success and failure paths are scrubbed defensively, matching the
+/// symmetric treatment applied in [`crate::backend::az`].
 fn run_help(runner: &dyn AzRunner, args: &[&str]) -> Result<String, String> {
     let out = runner
         .run(args)
         .map_err(|e| format!("failed to run 'az {}': {}", args.join(" "), e))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("'az {}' failed: {}", args.join(" "), stderr.trim()));
+        return Err(format!(
+            "'az {}' failed: {}",
+            args.join(" "),
+            scrub(stderr.trim())
+        ));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok(scrub(&String::from_utf8_lossy(&out.stdout)))
 }
 
 /// Parse a named section (`Subgroups:` / `Commands:`) out of help text.
@@ -253,5 +264,37 @@ mod tests {
         let runner = FakeAzRunner::new();
         let err = derive_group_capabilities(&runner, "group").unwrap_err();
         assert!(err.contains("failed"));
+    }
+
+    #[test]
+    fn cli_failure_scrubs_secrets_from_stderr() {
+        // `run_help`'s error path must scrub `az`'s stderr symmetrically
+        // with `backend::az::run_once`, in case a hostile/misconfigured
+        // extension ever echoes a secret into help-command failure text.
+        let hostile_stderr = format!(
+            "az cli extension error: token: {}",
+            crate::secrets::test_fixtures::HOSTILE_TOKEN
+        );
+        let runner = FakeAzRunner::new().with_failure(&["group", "--help"], &hostile_stderr);
+        let err = derive_group_capabilities(&runner, "group").unwrap_err();
+        assert!(!err.contains(crate::secrets::test_fixtures::HOSTILE_TOKEN));
+        assert!(err.contains("failed"));
+    }
+
+    #[test]
+    fn cli_success_scrubs_secrets_from_stdout() {
+        // Defense-in-depth: `run_help`'s success path scrubs stdout too, so
+        // a future `az` extension that echoes secret-shaped text in help
+        // output can never leak it into derived capability summaries.
+        let hostile_help = format!(
+            "\nGroup\n    az group : Manage resource groups.\n\nCommands:\n    create : Uses {}.\n",
+            crate::secrets::test_fixtures::HOSTILE_ACCOUNT_KEY_FRAGMENT
+        );
+        let runner = FakeAzRunner::new().with(&["group", "--help"], &hostile_help);
+        let caps = derive_group_capabilities(&runner, "group").unwrap();
+        let create = caps.iter().find(|c| c.verb == "create").unwrap();
+        assert!(!create
+            .summary
+            .contains(crate::secrets::test_fixtures::HOSTILE_ACCOUNT_KEY_VALUE));
     }
 }

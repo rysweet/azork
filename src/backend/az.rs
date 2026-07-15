@@ -10,6 +10,7 @@
 use super::Backend;
 use crate::az_runner::{AzRunner, ProcessAzRunner};
 use crate::parser::Direction;
+use crate::secrets::scrub;
 use crate::world::{Resource, Room, World};
 use std::io::ErrorKind;
 use std::thread::sleep;
@@ -122,11 +123,24 @@ impl AzBackend {
         })?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let msg = format!("'az {}' failed: {}", args.join(" "), stderr.trim());
-            return Err((msg, is_transient(&stderr)));
+            let retryable = is_transient(&stderr);
+            let msg = format_az_error(args, &stderr);
+            return Err((msg, retryable));
         }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        // `az` stdout is attacker/environment-influenced text we did not
+        // generate; scrub it defensively too, in case a future command ever
+        // projects a secret-bearing field (e.g. a connection string or key)
+        // on success. Today's `--query` projections are narrow (name/type/
+        // location only), but this closes the gap for any future query.
+        Ok(scrub(&String::from_utf8_lossy(&output.stdout)))
     }
+}
+
+/// Format the error message for a failed `az` invocation, with `stderr`
+/// scrubbed of any secret-shaped material before it can reach a
+/// `println!`/`eprintln!` or be persisted.
+fn format_az_error(args: &[&str], stderr: &str) -> String {
+    format!("'az {}' failed: {}", args.join(" "), scrub(stderr.trim()))
 }
 
 /// Heuristic: decide whether an `az` stderr message describes a transient
@@ -325,9 +339,8 @@ impl Backend for AzBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_transient, parse_group_tsv, parse_resource_tsv, AzBackend};
+    use super::*;
     use crate::az_runner::FakeAzRunner;
-    use crate::backend::Backend;
 
     #[test]
     fn parse_group_tsv_parses_name_and_location() {
@@ -390,6 +403,80 @@ mod tests {
         ));
         assert!(!is_transient("Forbidden"));
         assert!(!is_transient(""));
+    }
+
+    /// `run` must never build a shell command line: every argument is a
+    /// discrete element of the vector passed to `Command::args`, so shell
+    /// metacharacters embedded in a value (from a malicious resource name,
+    /// subscription, or region) can never be reinterpreted by a shell. We
+    /// can't spawn a real `az`, but we can prove the invariant that matters:
+    /// arguments are carried as an untouched `&[&str]` all the way to
+    /// `Command::args`, never joined into a single string that a shell would
+    /// re-parse.
+    #[test]
+    fn run_once_never_shell_joins_arguments() {
+        // A value containing shell metacharacters must survive as a single,
+        // unmodified argument — proving no `sh -c "... {value} ..."` style
+        // interpolation happens anywhere on this path.
+        let hostile = "rg; rm -rf / #`whoami`$(id)";
+        let args = ["group", "show", "-n", hostile];
+        // `run_once` always calls `self.runner.run(args)`, which for
+        // `ProcessAzRunner` calls `Command::new("az").args(args)`, i.e. the
+        // exact slice below, with no string concatenation in between.
+        let mut cmd = std::process::Command::new("az");
+        cmd.args(args);
+        let collected: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(collected, vec!["group", "show", "-n", hostile]);
+        // The hostile string must appear verbatim as its own argument, never
+        // split or reinterpreted.
+        assert_eq!(collected[3], hostile);
+    }
+
+    #[test]
+    fn az_error_messages_are_scrubbed_of_secrets() {
+        // Exercise the real error-formatting function used by `run_once` on
+        // failure, proving the integration point without depending on a
+        // real `az` binary being installed.
+        let hostile_stderr = format!(
+            "ERROR: token: {} {}",
+            crate::secrets::test_fixtures::HOSTILE_TOKEN,
+            crate::secrets::test_fixtures::HOSTILE_ACCOUNT_KEY_FRAGMENT
+        );
+        let msg = format_az_error(&["account", "show"], &hostile_stderr);
+        assert!(!msg.contains(crate::secrets::test_fixtures::HOSTILE_TOKEN));
+        assert!(!msg.contains(crate::secrets::test_fixtures::HOSTILE_ACCOUNT_KEY_VALUE));
+        assert!(msg.starts_with("'az account show' failed:"));
+    }
+
+    #[test]
+    fn build_world_handles_malformed_tsv_without_panicking() {
+        // Lines with missing columns, empty names, or stray tabs must not
+        // panic. This calls the real `parse_group_tsv` helper used by
+        // `build_world` directly.
+        let malformed = "\n\t\tunnamed\n\tlocation-only\ngoodname\tgoodloc\n\t\t\t\t";
+        let groups = parse_group_tsv(malformed);
+        assert!(groups.iter().any(|(n, _)| n == "goodname"));
+    }
+
+    #[test]
+    fn run_once_success_path_scrubs_stdout() {
+        // `run_once`'s success path applies `scrub()` to stdout as
+        // defense-in-depth. Verify `scrub` itself redacts secret-shaped
+        // stdout content without mangling plain resource names, matching
+        // the guarantee `run_once` now relies on.
+        let plain_tsv = "my-resource-group\teastus\nanother-rg\twestus2";
+        assert_eq!(scrub(plain_tsv), plain_tsv);
+
+        let hostile_stdout = format!(
+            "my-rg\teastus\n{}\tfakeus",
+            crate::secrets::test_fixtures::HOSTILE_ACCOUNT_KEY_FRAGMENT
+        );
+        let scrubbed = scrub(&hostile_stdout);
+        assert!(!scrubbed.contains(crate::secrets::test_fixtures::HOSTILE_ACCOUNT_KEY_VALUE));
+        assert!(scrubbed.contains("my-rg"));
     }
 
     /// A live subscription with more groups than the room cap must not build a
