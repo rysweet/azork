@@ -186,17 +186,19 @@ fn redact_glued_pairs(word: &str) -> String {
 }
 
 /// Case-insensitive membership check against [`SECRET_KEYS`].
+///
+/// Compares byte-by-byte with [`str::eq_ignore_ascii_case`] rather than
+/// allocating a lowercased copy of `key` for every word scanned.
 fn is_secret_key(key: &str) -> bool {
-    SECRET_KEYS.contains(&key.to_ascii_lowercase().as_str())
+    SECRET_KEYS.iter().any(|k| k.eq_ignore_ascii_case(key))
 }
 
 /// Redact `Bearer <token>` authorization header values.
 fn redact_bearer_tokens(line: &str) -> String {
     const PREFIX: &str = "Bearer ";
-    let lower = line.to_ascii_lowercase();
     let mut out = String::with_capacity(line.len());
     let mut idx = 0;
-    while let Some(rel) = lower[idx..].find("bearer ") {
+    while let Some(rel) = find_ignore_case(&line[idx..], "bearer ") {
         let start = idx + rel;
         out.push_str(&line[idx..start]);
         out.push_str(PREFIX);
@@ -210,6 +212,25 @@ fn redact_bearer_tokens(line: &str) -> String {
     }
     out.push_str(&line[idx..]);
     out
+}
+
+/// Find the first case-insensitive occurrence of the ASCII `needle` in
+/// `haystack`, returning its byte offset.
+///
+/// Equivalent to `haystack.to_ascii_lowercase().find(needle)` but scans
+/// byte-by-byte instead of allocating a lowercased copy of the (potentially
+/// large) haystack on every call -- `scrub` runs on every `az` error
+/// message, so this avoids an O(n) allocation-and-copy that is wasted
+/// whenever no bearer token is present. Every byte of `needle` (an ASCII
+/// literal) is itself ASCII, so a match can never start mid-way through a
+/// multi-byte UTF-8 sequence.
+fn find_ignore_case(haystack: &str, needle: &str) -> Option<usize> {
+    let h = haystack.as_bytes();
+    let n = needle.as_bytes();
+    if n.is_empty() || h.len() < n.len() {
+        return None;
+    }
+    (0..=h.len() - n.len()).find(|&i| h[i..i + n.len()].eq_ignore_ascii_case(n))
 }
 
 /// Redact bare JWT-shaped tokens (`eyJ...` base64url segments joined by `.`),
