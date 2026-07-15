@@ -193,9 +193,7 @@ fn main() {
         };
 
         // Every non-empty line is an intent AzZork has now seen.
-        if !line.trim().is_empty() {
-            memory.record_intent(line.trim());
-        }
+        record_seen_intent(&mut memory, &line);
 
         let cmd = parser::parse(&line);
         let quit = handle(
@@ -260,6 +258,16 @@ fn resolve_backend_id() -> Option<String> {
         i += 1;
     }
     std::env::var("AZORK_BACKEND").ok()
+}
+
+/// Record that the player typed `line` as an intent, capping its length
+/// before persisting so a single very long line can't grow `memory.graph`
+/// unbounded (see GitHub issue #32). No-op for blank/whitespace-only input.
+fn record_seen_intent(memory: &mut GraphMemory, line: &str) {
+    let trimmed = line.trim();
+    if !trimmed.is_empty() {
+        memory.record_intent(&azork::agent::truncate_intent(trimmed));
+    }
 }
 
 /// Handle a single command. Returns `true` if the player asked to quit.
@@ -699,6 +707,36 @@ mod tests {
     fn confirm_defaults_no_on_eof() {
         let mut it: std::vec::IntoIter<io::Result<String>> = vec![].into_iter();
         assert!(!confirm("go?", &mut it));
+    }
+
+    /// GitHub issue #32: *every* raw input line is remembered via
+    /// `record_intent` on each REPL turn (not just unresolved ones). A very
+    /// long line must not be persisted verbatim into the memory graph here
+    /// either — it should be truncated before being recorded.
+    #[test]
+    fn long_seen_intent_is_truncated_before_persisting() {
+        let mut memory = GraphMemory::new();
+        let long_input = "q".repeat(2400);
+
+        record_seen_intent(&mut memory, &long_input);
+
+        let hits = memory.recall("qqq", None, 10);
+        assert!(
+            !hits.is_empty(),
+            "expected an intent node to be recorded for the long input"
+        );
+        for n in hits {
+            assert!(
+                n.content.len() < long_input.len(),
+                "persisted intent note should be truncated, was {} chars",
+                n.content.len()
+            );
+            assert!(
+                n.content.contains("...(truncated)"),
+                "persisted intent note should carry a truncation indicator: {}",
+                n.content
+            );
+        }
     }
 
     /// GitHub issue #32: a very long unresolved free-text intent must not be
