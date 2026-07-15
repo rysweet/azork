@@ -335,6 +335,11 @@ The output is a self-contained Markdown friction report (see
 use cases run, friction observed, resources created/torn down, and suggested
 improvements.
 
+`azork-oit`'s Azure-facing use-case catalog is one part of a broader,
+manually/agentically driven black-box test of the whole product — the REPL,
+`azork crawl`, the CLI surface, and the README's quick-start. See
+[Carl OIT campaign](CARL-OIT-CAMPAIGN.md) for that process.
+
 #### Cost-gate note
 
 The cost gate only ever evaluates estimates drawn from a small, hard-coded
