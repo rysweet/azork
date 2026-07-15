@@ -14,7 +14,7 @@ use crate::dungeon::links;
 use crate::dungeon::map::DungeonMap;
 use crate::dungeon::{commands, render};
 use serde_json::json;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -143,6 +143,34 @@ pub fn route(map: &DungeonMap, method: &str, path: &str) -> RouteResponse {
     not_found()
 }
 
+/// Read a single `\n`-terminated line from `reader`, refusing to grow the
+/// buffer past [`MAX_LINE_LEN`]. An oversized line (or one with no
+/// terminator before the cap) is treated as a hard I/O error, ending the
+/// connection instead of letting an unauthenticated peer force unbounded
+/// buffer growth.
+fn read_bounded_line(reader: &mut BufReader<TcpStream>) -> io::Result<String> {
+    let mut line = String::new();
+    loop {
+        let mut byte = [0u8; 1];
+        match reader.read(&mut byte)? {
+            0 => break,
+            _ => {
+                line.push(byte[0] as char);
+                if byte[0] == b'\n' {
+                    break;
+                }
+                if line.len() > MAX_LINE_LEN {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "request line exceeded maximum allowed length",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(line)
+}
+
 fn not_found() -> RouteResponse {
     RouteResponse {
         status: 404,
@@ -223,6 +251,18 @@ pub fn serve(map: DungeonMap, bind_addr: &str) -> io::Result<ServerHandle> {
     })
 }
 
+/// Hard cap on a single request-line or header-line length. This server
+/// never needs long lines (the routes it serves take short paths and no
+/// meaningful headers); the cap exists purely to bound how much an
+/// unauthenticated peer can make a connection allocate before we give up.
+const MAX_LINE_LEN: usize = 8 * 1024;
+/// Hard cap on how much of a request body we will ever buffer.
+/// This server has no route that reads the body, so any `Content-Length`
+/// is drained (to keep the connection well-formed) but never trusted as an
+/// allocation size directly — a malicious/huge value must not make us try
+/// to allocate multiple gigabytes up front.
+const MAX_BODY_LEN: u64 = 1024 * 1024;
+
 /// Read one HTTP/1.x request line + headers off `stream`, route it, and
 /// write back the response. Best-effort: any I/O or parse error just ends
 /// the connection rather than panicking the server thread.
@@ -230,20 +270,16 @@ fn handle_connection(mut stream: TcpStream, map: &DungeonMap) -> io::Result<()> 
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     let mut reader = BufReader::new(stream.try_clone()?);
 
-    let mut request_line = String::new();
-    reader.read_line(&mut request_line)?;
+    let request_line = read_bounded_line(&mut reader)?;
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("").to_string();
     let path = parts.next().unwrap_or("/").to_string();
 
     // Drain the rest of the headers (up to the blank line) without acting on
     // them; this server has no auth and no request body handling.
-    let mut content_length: usize = 0;
+    let mut content_length: u64 = 0;
     loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line)? == 0 {
-            break;
-        }
+        let line = read_bounded_line(&mut reader)?;
         let trimmed = line.trim_end();
         if trimmed.is_empty() {
             break;
@@ -257,8 +293,19 @@ fn handle_connection(mut stream: TcpStream, map: &DungeonMap) -> io::Result<()> 
         }
     }
     if content_length > 0 {
-        let mut buf = vec![0u8; content_length];
-        let _ = reader.read_exact(&mut buf);
+        // Never pre-allocate a buffer sized directly off an attacker-supplied
+        // header: cap what we're willing to read/discard, and stream it
+        // through a small fixed buffer rather than one big `Vec`.
+        let mut budget = content_length.min(MAX_BODY_LEN);
+        let mut chunk = [0u8; 4096];
+        while budget > 0 {
+            let want = budget.min(chunk.len() as u64) as usize;
+            match reader.read(&mut chunk[..want]) {
+                Ok(0) => break,
+                Ok(n) => budget -= n as u64,
+                Err(_) => break,
+            }
+        }
     }
 
     let resp = route(map, &method, &path);

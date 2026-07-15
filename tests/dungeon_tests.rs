@@ -713,6 +713,53 @@ fn serve_binds_to_loopback_and_answers_a_real_http_request() {
     handle.shutdown();
 }
 
+/// A hostile `Content-Length` claiming many gigabytes must never make the
+/// server pre-allocate a buffer of that size (a trivial local memory-DoS);
+/// the connection should still be served promptly and correctly.
+#[test]
+fn serve_rejects_oversized_content_length_without_huge_allocation() {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::{Duration, Instant};
+
+    let dmap = small_map();
+    let handle = server::serve(dmap, "127.0.0.1:0").expect("server should bind and start");
+    let addr = handle.addr();
+
+    let mut stream =
+        TcpStream::connect(addr).expect("should be able to connect to the just-bound server");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream
+        .write_all(
+            b"GET /api/v1/rooms HTTP/1.1\r\nHost: localhost\r\n\
+              Content-Length: 999999999999\r\nConnection: close\r\n\r\nshort-body",
+        )
+        .expect("request should be writable");
+    // Signal EOF on our write side: the server's bounded drain must stop as
+    // soon as the peer runs out of data instead of blocking for the full
+    // (attacker-claimed) content length.
+    stream
+        .shutdown(std::net::Shutdown::Write)
+        .expect("should be able to half-close the write side");
+
+    let start = Instant::now();
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .expect("response should be readable");
+
+    // The server must not have tried to allocate/wait for ~1TB of body; it
+    // should respond promptly (well under the 5s read timeout) using the
+    // bounded drain rather than a huge up-front `Vec` allocation.
+    assert!(start.elapsed() < Duration::from_secs(4));
+    assert!(response.starts_with("HTTP/1.1 200"));
+    assert!(response.contains("web-rg"));
+
+    handle.shutdown();
+}
+
 #[test]
 fn serve_picks_a_free_port_when_requested_port_is_zero() {
     let dmap = small_map();
