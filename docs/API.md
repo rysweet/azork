@@ -46,13 +46,17 @@ src/
                         timeout/zombie-process/pipe-deadlock hardening)
 ```
 
-Two **optional companion crates** live alongside the root package but are never
-compiled by `cargo build`/`cargo test` at the repo root (no `[workspace]` table,
-so they are fully opt-in):
+The [`src/agent_engine/`](../src/agent_engine/mod.rs) module is embedded in the
+main crate: it connects AzZork's `CapabilityRegistry` into the
+`recipe-runner-rs` agentic engine via an `AzorkAdapter`, compiled and tested by
+default `cargo build`/`cargo test` (no `[workspace]` table needed — it depends
+on a vendored, offline `path` dependency, see
+[`vendor/recipe-runner-rs/`](../vendor/recipe-runner-rs/)).
 
-- [`agentic-bridge/`](../agentic-bridge/README.md) — bridges AzZork's
-  `CapabilityRegistry` into the `recipe-runner-rs` agentic engine via an
-  `AzorkAdapter`.
+One **optional companion crate** lives alongside the root package but is never
+compiled by `cargo build`/`cargo test` at the repo root (no `[workspace]` table,
+so it is fully opt-in):
+
 - [`memory-store/`](../memory-store/README.md) — mirrors `GraphMemory` into a
   durable, SQLite-backed `amplihack-memory` store (`PersistentStore`).
 
@@ -302,8 +306,8 @@ Agentic resolution of unknown/ambiguous intent — AzZork never dead-ends.
   `narrate()`.
 - **`IntentResolver<A: Adapter>`** — ties an adapter to a registry; never fails.
 
-The recipe-runner-backed `AzorkAdapter` in the optional
-[`agentic-bridge`](../agentic-bridge/README.md) companion crate implements this
+The recipe-runner-backed `AzorkAdapter` in the embedded
+[`agent_engine`](../src/agent_engine/mod.rs) module implements this
 same `Adapter` trait as a drop-in, richer alternative to `MockAdapter`.
 
 ## `memory` module
@@ -436,12 +440,17 @@ credentials. Similarly, no test in `tests/` or `src/` invokes the live
 `azork-oit` binary against a real subscription — its guardrails and friction
 heuristics are exercised entirely through the pure `oit` module's unit tests.
 
+### Embedded agentic tests (run by default `cargo test` at the repo root)
+
+- `src/agent_engine/mod.rs` unit tests — `AzorkAdapter` intent resolution
+  against a `CapabilityRegistry`, and `run_intent_recipe` executing
+  `INTENT_RESOLUTION_RECIPE` end-to-end via the vendored, offline
+  `recipe-runner-rs` dependency (see
+  [`vendor/recipe-runner-rs/`](../vendor/recipe-runner-rs/)) — no sibling
+  checkout or network access required.
+
 ### Companion-crate tests (opt-in, not run by `cargo test` at the repo root)
 
-- `(cd agentic-bridge && cargo test)` — `AzorkAdapter` intent resolution against
-  a `CapabilityRegistry`, and `run_intent_recipe` executing
-  `INTENT_RESOLUTION_RECIPE` end-to-end (requires `amplihack-recipe-runner`
-  checked out as a sibling; see [`agentic-bridge/README.md`](../agentic-bridge/README.md)).
 - `(cd memory-store && cargo test)` — `PersistentStore::save`/`load`/`recall`
   round-tripping a `GraphMemory` (nodes and edges) through a real, temporary
   SQLite-backed `amplihack-memory` store (requires `amplihack-memory-lib`

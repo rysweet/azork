@@ -1,22 +1,23 @@
-//! Optional companion crate: bridges AzZork into the [`recipe-runner-rs`] agentic
-//! engine.
+//! Embedded agentic recipe-running capability.
 //!
-//! This is the *live* counterpart to AzZork's offline `MockAdapter`. It embeds the
-//! [`recipe-runner-rs`] engine the same way Simard and Powderfinger do: it
-//! implements the runner's [`Adapter`](recipe_runner_rs::adapters::Adapter) trait,
-//! then hands it to `run_recipe`, letting an amplihack recipe orchestrate
-//! multi-step intent resolution (agent steps + bash steps) around AzZork's own
-//! learned [`CapabilityRegistry`](azork::capabilities::CapabilityRegistry).
+//! This module embeds the [`recipe-runner-rs`] engine directly into AzZork's
+//! default build (via a vendored, offline `path` dependency — see
+//! `vendor/recipe-runner-rs/`), the same way Simard and Powderfinger embed the
+//! runner in a Rust agent. It implements the runner's
+//! [`Adapter`](recipe_runner_rs::adapters::Adapter) trait, then hands it to
+//! `run_recipe`, letting an amplihack recipe orchestrate multi-step intent
+//! resolution (agent steps + bash steps) around AzZork's own learned
+//! [`CapabilityRegistry`](crate::capabilities::CapabilityRegistry).
 //!
-//! The bridge is deterministic where it can be: an *agent step* resolves its
-//! prompt against the learned registry via AzZork's offline resolver (no LLM, no
+//! It is deterministic where it can be: an *agent step* resolves its prompt
+//! against the learned registry via AzZork's offline resolver (no LLM, no
 //! network), while *bash steps* are delegated to the runner's standard CLI
 //! subprocess adapter so recipes can still shell out to `az` for real work.
 //!
-//! It lives in a **separate crate** on purpose, so that azork's own
-//! `cargo build`/`cargo test` remain zero-dependency, offline, and green on a
-//! fresh clone. Building this bridge is opt-in and requires the reference repos to
-//! be checked out side-by-side.
+//! Because `recipe-runner-rs` is vendored offline and depended on directly by
+//! this crate, `cargo build`/`cargo test` at the repo root compile and
+//! exercise this capability by default — no separate opt-in crate or
+//! side-by-side sibling checkout is required.
 //!
 //! [`recipe-runner-rs`]: https://crates.io/crates/recipe-runner-rs
 
@@ -27,10 +28,10 @@ use recipe_runner_rs::adapters::Adapter as RecipeAdapter;
 use recipe_runner_rs::models::RecipeResult;
 use recipe_runner_rs::run_recipe;
 
-use azork::agent::{Adapter, MockAdapter};
-use azork::capabilities::CapabilityRegistry;
+use crate::agent::{Adapter, MockAdapter};
+use crate::capabilities::CapabilityRegistry;
 
-/// Bridges AzZork into the `recipe-runner-rs` [`RecipeAdapter`] seam.
+/// Embeds AzZork into the `recipe-runner-rs` [`RecipeAdapter`] seam.
 ///
 /// * Agent steps → resolve the prompt against learned capabilities using
 ///   AzZork's deterministic offline resolver (so the default agentic path stays
@@ -119,7 +120,7 @@ steps:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use azork::capabilities::Capability;
+    use crate::capabilities::Capability;
 
     fn registry() -> CapabilityRegistry {
         let mut reg = CapabilityRegistry::new();
@@ -162,5 +163,16 @@ mod tests {
         let res = run_intent_recipe(INTENT_RESOLUTION_RECIPE, registry(), true)
             .expect("recipe should parse and run");
         assert_eq!(res.recipe_name, "azork-intent-resolution");
+    }
+
+    #[test]
+    fn embedded_by_default_build_compiles_and_runs() {
+        // Regression test proving the agentic capability is part of the default
+        // build (no feature flag, no separate crate): if this test compiles and
+        // passes under plain `cargo test`, `agent_engine` is embedded, not opt-in.
+        assert!(!INTENT_RESOLUTION_RECIPE.is_empty());
+        let res = run_intent_recipe(INTENT_RESOLUTION_RECIPE, registry(), true)
+            .expect("embedded recipe engine should run offline by default");
+        assert!(res.success);
     }
 }
