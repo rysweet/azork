@@ -17,20 +17,56 @@ const NETWORK_TIMEOUT_SECS: u64 = 8;
 /// Hard cap on any single download (guards against oversize/bomb responses).
 const MAX_DOWNLOAD_BYTES: usize = 512 * 1024 * 1024; // 512 MiB
 
-/// GitHub host prefixes the updater is permitted to talk to.
-const ALLOWED_HOSTS: &[&str] = &[
+/// GitHub host prefixes a *final* (post-redirect) response may legitimately be
+/// served from. GitHub's `releases/download/...` URLs 302 to the opaque signed
+/// blob host `objects.githubusercontent.com`, so it is trusted as a redirect
+/// target even though it carries no repository path.
+const ALLOWED_FINAL_HOSTS: &[&str] = &[
     "https://api.github.com/",
     "https://github.com/",
     "https://objects.githubusercontent.com/",
 ];
 
-/// Reject any URL that is not served from a trusted GitHub host.
+/// The exact URL prefixes the updater is permitted to *request*.
+///
+/// These are pinned to [`GITHUB_REPO`] — not merely to a GitHub host — so that
+/// even if attacker-controlled release JSON were ever parsed, its asset URLs
+/// could only point back at `rysweet/azork`'s own releases. Host-only checks
+/// (`github.com/...`) would let a fake release reference *any* public GitHub
+/// release; pinning the repository path closes that hole.
+fn allowed_request_prefixes() -> [String; 2] {
+    [
+        format!("https://api.github.com/repos/{GITHUB_REPO}/"),
+        format!("https://github.com/{GITHUB_REPO}/"),
+    ]
+}
+
+/// Reject any URL that is not an HTTPS request to this repository's own GitHub
+/// release endpoints. Enforces both TLS (via the `https://` prefix) and the
+/// `rysweet/azork` repository path.
 pub(crate) fn validate_download_url(url: &str) -> Result<()> {
-    if ALLOWED_HOSTS.iter().any(|p| url.starts_with(p)) {
+    if allowed_request_prefixes()
+        .iter()
+        .any(|p| url.starts_with(p))
+    {
         Ok(())
     } else {
         Err(UpdateError::Network(format!(
-            "refusing to download from a non-GitHub host: {url}"
+            "refusing to download from an untrusted URL (not a {GITHUB_REPO} release asset): {url}"
+        )))
+    }
+}
+
+/// Reject a *final* (possibly redirected) response URL served from a host
+/// outside [`ALLOWED_FINAL_HOSTS`]. This backstops the request-time pin: if a
+/// trusted request is redirected off a GitHub host, the download is refused
+/// before its body is read.
+fn validate_final_url(url: &str) -> Result<()> {
+    if ALLOWED_FINAL_HOSTS.iter().any(|p| url.starts_with(p)) {
+        Ok(())
+    } else {
+        Err(UpdateError::Network(format!(
+            "refusing a response redirected to a non-GitHub host: {url}"
         )))
     }
 }
@@ -66,6 +102,10 @@ pub(crate) fn http_get(url: &str) -> Result<Vec<u8>> {
         .call()
         .map_err(|e| UpdateError::Network(describe_ureq_error(url, &e)))?;
 
+    // ureq transparently follows redirects; make sure we did not get bounced to
+    // an untrusted host before we read (and later trust-by-checksum) the body.
+    validate_final_url(response.get_url())?;
+
     let mut body = Vec::new();
     response
         .into_reader()
@@ -96,15 +136,24 @@ fn describe_ureq_error(url: &str, err: &ureq::Error) -> String {
 
 /// Fetch and parse the latest stable release for [`GITHUB_REPO`].
 ///
-/// A test hook (`AZORK_TEST_FAKE_RELEASE_JSON`) allows injecting a release body
-/// without a network call; an empty value falls through to the real path so an
-/// exported-but-empty variable never silently disables real checks.
+/// # Test hook
+///
+/// In **non-release** builds only (`cfg(any(test, debug_assertions))`), the
+/// `AZORK_TEST_FAKE_RELEASE_JSON` environment variable may inject a release body
+/// so the resolve/update paths can be exercised without a network call. An empty
+/// value falls through to the real path. This hook is **compiled out of release
+/// binaries** so a shipped `azork` can never be induced to trust attacker-
+/// supplied release JSON (which, combined with a matching checksum, would
+/// otherwise let an env var redirect the self-update to arbitrary content).
 pub fn fetch_latest_release() -> Result<GithubRelease> {
-    if let Some(raw) = std::env::var_os("AZORK_TEST_FAKE_RELEASE_JSON") {
-        if !raw.is_empty() {
-            let body = raw.to_string_lossy();
-            return serde_json::from_str(&body)
-                .map_err(|e| UpdateError::Parse(format!("fake release JSON invalid: {e}")));
+    #[cfg(any(test, debug_assertions))]
+    {
+        if let Some(raw) = std::env::var_os("AZORK_TEST_FAKE_RELEASE_JSON") {
+            if !raw.is_empty() {
+                let body = raw.to_string_lossy();
+                return serde_json::from_str(&body)
+                    .map_err(|e| UpdateError::Parse(format!("fake release JSON invalid: {e}")));
+            }
         }
     }
     let url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases/latest");
@@ -123,17 +172,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn allowlist_accepts_github_hosts() {
-        assert!(validate_download_url("https://github.com/rysweet/azork/x").is_ok());
-        assert!(validate_download_url("https://api.github.com/repos/x").is_ok());
-        assert!(validate_download_url("https://objects.githubusercontent.com/y").is_ok());
+    fn request_allowlist_accepts_only_repo_pinned_urls() {
+        // Real release + API asset URLs for rysweet/azork are accepted.
+        assert!(validate_download_url(
+            "https://github.com/rysweet/azork/releases/download/v0.3.0/azork-x86_64.tar.gz"
+        )
+        .is_ok());
+        assert!(validate_download_url(
+            "https://api.github.com/repos/rysweet/azork/releases/latest"
+        )
+        .is_ok());
     }
 
     #[test]
-    fn allowlist_rejects_other_hosts() {
-        assert!(validate_download_url("https://evil.example.com/x").is_err());
-        assert!(validate_download_url("http://github.com/x").is_err()); // no TLS
-        assert!(validate_download_url("ftp://github.com/x").is_err());
+    fn request_allowlist_rejects_other_repos_hosts_and_plain_http() {
+        // Right host, wrong repository — must be refused (fake-release defense).
+        assert!(
+            validate_download_url("https://github.com/attacker/repo/releases/download/x").is_err()
+        );
+        assert!(validate_download_url(
+            "https://api.github.com/repos/attacker/repo/releases/latest"
+        )
+        .is_err());
+        // A bare CDN blob is not a valid *request* target (only a redirect one).
+        assert!(validate_download_url("https://objects.githubusercontent.com/y").is_err());
+        // Non-GitHub host and non-TLS are refused.
+        assert!(validate_download_url("https://evil.example.com/rysweet/azork/").is_err());
+        assert!(validate_download_url("http://github.com/rysweet/azork/x").is_err()); // no TLS
+        assert!(validate_download_url("ftp://github.com/rysweet/azork/x").is_err());
+    }
+
+    #[test]
+    fn final_url_allowlist_accepts_cdn_and_github_hosts() {
+        assert!(validate_final_url("https://objects.githubusercontent.com/blob").is_ok());
+        assert!(validate_final_url("https://github.com/rysweet/azork/releases/download/x").is_ok());
+        assert!(validate_final_url("https://evil.example.com/x").is_err());
     }
 
     #[test]

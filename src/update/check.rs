@@ -13,9 +13,7 @@ use super::{
     CURRENT_VERSION, NO_UPDATE_CHECK_ENV,
 };
 use semver::Version;
-use std::io::{self, IsTerminal, Write};
-use std::sync::mpsc;
-use std::time::Duration;
+use std::io::{self, BufRead, IsTerminal, Write};
 
 /// Outcome of the startup update check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,9 +66,6 @@ pub enum SkipReason {
 /// breaking change to that contract.
 pub const SUBPROCESS_SAFE_SKIP_LINE: &str =
     "azork: skipping update check (subprocess-safe / no TTY)";
-
-/// Seconds to wait for the user's answer at the update prompt before giving up.
-const PROMPT_TIMEOUT_SECS: u64 = 5;
 
 /// Decide whether the startup check must be skipped, and why.
 ///
@@ -125,9 +120,9 @@ fn current_skip_env(args: &[String]) -> SkipEnv {
 ///
 /// Returns [`StartupUpdateOutcome::Continue`] in every case except a successful
 /// self-update (which returns [`StartupUpdateOutcome::ExitSuccess`] so the
-/// caller can exit and let the user restart). This never hangs: it is gated by
-/// [`classify_skip_reason`], honours the 24h cooldown, and bounds the prompt
-/// with a [`PROMPT_TIMEOUT_SECS`] timeout.
+/// caller can exit and let the user restart). It only ever prompts on a genuine
+/// interactive TTY (see [`classify_skip_reason`]) and honours the 24h cooldown,
+/// so it never prompts or hangs under CI/automation/subprocess use.
 pub fn maybe_startup_check(args: &[String]) -> StartupUpdateOutcome {
     // No published asset for this platform → nothing to do.
     if super::supported_release_target().is_none() {
@@ -173,7 +168,7 @@ pub fn maybe_startup_check(args: &[String]) -> StartupUpdateOutcome {
         "A new azork release is available: {CURRENT_VERSION} -> {}.",
         resolved.version
     );
-    if !prompt_yes_no_timeout("Install it now?", PROMPT_TIMEOUT_SECS) {
+    if !prompt_yes_no("Install it now?") {
         println!("Skipping. Run `azork update` any time, or set {NO_UPDATE_CHECK_ENV}=1 to silence this.");
         return StartupUpdateOutcome::Continue;
     }
@@ -190,30 +185,25 @@ pub fn maybe_startup_check(args: &[String]) -> StartupUpdateOutcome {
     }
 }
 
-/// Prompt for a yes/no answer, returning `false` if the user does not answer
-/// affirmatively within `timeout_secs`. Defaults to "no".
-fn prompt_yes_no_timeout(question: &str, timeout_secs: u64) -> bool {
+/// Prompt for a yes/no answer, returning `false` for anything but an
+/// affirmative reply (and for EOF). Defaults to "no".
+///
+/// This reads a single line on the **calling thread**, so it never leaves a
+/// competing background reader holding stdin — which previously could swallow
+/// the player's first game command after the prompt. It is only ever reached on
+/// a genuine interactive TTY (guaranteed by [`classify_skip_reason`]), so a
+/// blocking read here waits for the human who just triggered the prompt.
+fn prompt_yes_no(question: &str) -> bool {
     print!("{question} [y/N] ");
     io::stdout().flush().ok();
 
-    let (tx, rx) = mpsc::channel();
-    // The reader thread is detached; if it outlives the timeout it simply sends
-    // to a dropped receiver and exits. We never join it, so we never block.
-    std::thread::spawn(move || {
-        let mut line = String::new();
-        if io::stdin().read_line(&mut line).is_ok() {
-            let _ = tx.send(line);
-        }
-    });
-
-    match rx.recv_timeout(Duration::from_secs(timeout_secs)) {
-        Ok(line) => {
+    let mut line = String::new();
+    match io::stdin().lock().read_line(&mut line) {
+        // EOF (0 bytes) or an error → treat as "no".
+        Ok(0) | Err(_) => false,
+        Ok(_) => {
             let a = line.trim().to_lowercase();
             a == "y" || a == "yes"
-        }
-        Err(_) => {
-            println!("\n(no response within {timeout_secs}s — skipping update)");
-            false
         }
     }
 }
