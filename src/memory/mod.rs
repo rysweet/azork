@@ -162,6 +162,11 @@ impl GraphMemory {
     /// (see [`Self::save`]). This is the single choke point every recorder
     /// (`record_friction`, `record_intent`, `remember_capability`,
     /// `remember_room`, `remember_resource`) funnels through.
+    ///
+    /// **Maintenance invariant:** any future node-creation path must route
+    /// through `remember()` rather than constructing a `MemoryNode`
+    /// directly — bypassing it would skip scrubbing and reopen the gap
+    /// tracked as issue #17.
     pub fn remember(
         &mut self,
         kind: MemoryKind,
