@@ -42,7 +42,9 @@ src/
 │   └── azork-oit.rs   Live OIT driver binary: preflight, create/exercise/teardown
 └── backend/
     ├── mod.rs         Backend trait + select()
-    ├── mock.rs        Default offline synthetic world
+    ├── mock.rs        Default offline synthetic world (fixed, hand-authored)
+    ├── mock_gen.rs    Deterministic, seeded generator for sized synthetic worlds
+    │                  (--mock-size / AZORK_MOCK_SIZE, see below)
     └── az.rs          Optional read-only live-Azure world (driven via AzRunner, with
                         timeout/zombie-process/pipe-deadlock hardening)
 ```
@@ -292,6 +294,70 @@ through an injected `AzRunner` (`AzBackend::new()` uses `ProcessAzRunner`;
 `name()` → `"az (live Azure)"`. See
 [the `az` backend](CONFIGURATION.md#the-az-backend-live-azure) for the exact
 commands and safety guarantees.
+
+## `backend::mock_gen` module
+
+Deterministic, seeded generator for **sized** synthetic mock worlds, used to
+scale-test the Dungeon Crawler map (room sizing, corridor spacing,
+decorations) offline. This module is additive: it never runs unless a size is
+explicitly requested via `--mock-size` / `AZORK_MOCK_SIZE*`; the default
+`MockBackend` (no size requested) is untouched and keeps building the fixed,
+hand-authored world exactly as before. See
+[Generating a sized mock tenant](DUNGEON-CRAWLER.md#generating-a-sized-mock-tenant)
+for the user-facing CLI/env grammar.
+
+```rust
+pub const DEFAULT_SEED: u64 = 42;
+
+pub enum MockSizePreset { Small, Medium, Large, Huge }
+impl MockSizePreset {
+    pub fn parse(s: &str) -> Option<MockSizePreset>;
+}
+
+pub struct MockSizeParams {
+    pub resource_groups: usize,
+    pub resources_per_group: usize,
+    pub seed: u64,
+}
+impl MockSizeParams {
+    pub fn from_preset(preset: MockSizePreset) -> MockSizeParams;
+    pub fn parse(spec: &str) -> Result<MockSizeParams, String>;
+    pub fn from_env() -> Option<Result<MockSizeParams, String>>;
+}
+
+pub fn generate_world(params: &MockSizeParams) -> Result<World, String>;
+pub fn fake_runner(params: &MockSizeParams) -> FakeAzRunner;
+```
+
+- **`MockSizePreset::parse`** — case-insensitive lookup of `small` / `medium`
+  (`med` shorthand accepted) / `large` / `huge`; returns `None` for anything
+  else (callers fall back to `MockSizeParams::parse` for the
+  explicit-count/`COUNTxPER_GROUP` grammar).
+- **`MockSizeParams::from_preset`** — resolves a named preset to its
+  `(resource_groups, resources_per_group)` counts (5×3, 25×5, 100×8, 500×10
+  respectively) with `seed = DEFAULT_SEED`.
+- **`MockSizeParams::parse`** — parses the full `--mock-size` / `AZORK_MOCK_SIZE`
+  grammar: a bare preset name (`large`), a bare resource-group count (`200`),
+  an explicit `COUNTxPER_GROUP` pair (`300x12`), or any of the above with a
+  `:SEED` suffix (`large:7`) to override `DEFAULT_SEED`. Returns `Err(String)`
+  with a human-readable message on malformed input (never panics).
+- **`MockSizeParams::from_env`** — resolves `AZORK_MOCK_SIZE` (full grammar)
+  then applies `AZORK_MOCK_RGS` / `AZORK_MOCK_RESOURCES_PER_RG` /
+  `AZORK_MOCK_SEED` as individual overrides on top; returns `None` when none of
+  the four env vars are set (i.e. "no size requested, use the default fixed
+  world"), or `Some(Err(..))` if what *is* set fails to parse.
+- **`generate_world`** — pure function: `MockSizeParams` in, a fully populated
+  `World` out (resource groups as rooms, resources attached to rooms, exits/
+  corridors between rooms). No I/O, no wall-clock, no OS randomness — the same
+  `MockSizeParams` (including `seed`) always produces an identical `World`.
+  Resource groups are laid out on a grid and connected so every room is
+  reachable from the start room; resource types are drawn from the same set
+  the map's icon renderer recognizes (storage accounts, VMs, vnets, web apps,
+  key vaults, AKS, SQL, Cosmos DB, NICs, NSGs, public IPs, load balancers).
+- **`fake_runner`** — convenience wrapper that builds a `FakeAzRunner` (see
+  `az_runner` below) pre-seeded with the sized world's equivalent `az` CLI
+  output, for exercising the `az`-backend code paths against a large synthetic
+  estate in tests without a live subscription.
 
 ## `az_runner` module
 

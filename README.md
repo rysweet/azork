@@ -306,6 +306,18 @@ cargo run
 This loads a small synthetic Azure estate (subscriptions, resource groups and
 resources) so the game runs anywhere with **zero credentials and no network**.
 
+Want a bigger synthetic tenant to explore or test the map layout against?
+Request a sized, deterministic, offline-generated estate instead:
+
+```bash
+AZORK_MOCK_SIZE=large azork          # ~100 synthetic resource groups
+AZORK_MOCK_SIZE=200x10 azork         # explicit: 200 RGs, 10 resources each
+```
+
+See [Generating a sized mock tenant](docs/DUNGEON-CRAWLER.md#generating-a-sized-mock-tenant)
+for the full grammar (presets, explicit counts, seeds) and the `azork crawl
+--mock-size` equivalent.
+
 ### Real backend (optional — shells out to the `az` CLI)
 
 Explore your *actual* subscription. Requires the [Azure CLI](https://learn.microsoft.com/cli/azure/)

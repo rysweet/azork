@@ -26,6 +26,14 @@ pub struct CrawlArgs {
     /// `--playwright` — best-effort richer render, always degrades
     /// gracefully to the native renderer.
     pub playwright: bool,
+    /// `--mock-size <spec>` — request a sized synthetic estate from the
+    /// mock backend instead of its small default demo estate. Same grammar
+    /// as `AZORK_MOCK_SIZE` (see
+    /// [`crate::backend::mock_gen::MockSizeParams::parse`]): a preset name
+    /// (`small`/`medium`/`large`/`huge`), a bare resource-group count, or
+    /// `COUNTxPER_GROUP`, with an optional `:<seed>` suffix. Ignored for
+    /// non-mock backends.
+    pub mock_size: Option<String>,
 }
 
 impl Default for CrawlArgs {
@@ -37,6 +45,7 @@ impl Default for CrawlArgs {
             out: None,
             budget: DEFAULT_BUDGET,
             playwright: false,
+            mock_size: None,
         }
     }
 }
@@ -52,7 +61,7 @@ pub fn is_crawl_subcommand(arg: &str) -> bool {
 /// `--help`/`-h` is passed and on request exits 0 rather than being treated
 /// as an unknown flag.
 pub const CRAWL_HELP: &str = r#"azork crawl [--backend <id>] [--serve] [--port <n>] [--out <path>]
-            [--budget <n>] [--playwright]
+            [--budget <n>] [--playwright] [--mock-size <spec>]
 
 Render the Dungeon Crawler map (alias: azork dungeon).
 
@@ -64,6 +73,12 @@ Flags:
   --budget <n>             room/exploration budget, default 64
   --playwright             best-effort richer render; degrades gracefully to the
                            native renderer if unavailable
+  --mock-size <spec>       generate a sized synthetic mock estate instead of the
+                           small default demo estate (mock backend only); spec is
+                           a preset (small/medium/large/huge), a resource-group
+                           count, or COUNTxPER_GROUP, optionally suffixed with
+                           `:<seed>` (e.g. "large", "200", "200x15:7"). Also settable
+                           via AZORK_MOCK_SIZE.
   --help, -h               show this help and exit
 "#;
 
@@ -125,6 +140,14 @@ pub fn parse(args: &[String]) -> Result<CrawlArgs, String> {
                     .map_err(|_| format!("--budget value '{raw}' is not a valid number"))?;
             }
             "--playwright" => parsed.playwright = true,
+            "--mock-size" => {
+                i += 1;
+                parsed.mock_size = Some(
+                    args.get(i)
+                        .cloned()
+                        .ok_or_else(|| "--mock-size requires a value".to_string())?,
+                );
+            }
             other => return Err(format!("unknown flag '{other}'")),
         }
         i += 1;
