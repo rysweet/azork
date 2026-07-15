@@ -1,14 +1,14 @@
 //! Compile-time-embedded SVG icon bodies for every icon key in
 //! [`crate::dungeon::type_table`].
 //!
-//! Each SVG is an **original, hand-authored monochrome line glyph** owned by
-//! this project — not Microsoft's copyrighted Azure Architecture Icons
-//! artwork (see [`../../assets/azure-icons/LICENSE-NOTICE.md`] for the full
-//! rationale: Microsoft's published terms permit *using* their icons to
-//! illustrate your own diagram, but do not grant a license to redistribute
-//! the icon files themselves bundled inside a third-party repository or
-//! compiled into a third-party binary). Every file is embedded at compile
-//! time via `include_str!` — never read from disk at runtime — so a saved
+//! Each SVG is one of Microsoft's **official Azure Architecture Icons**
+//! (the "Azure Public Service Icons" set published at
+//! <https://learn.microsoft.com/en-us/azure/architecture/icons/>), used here
+//! to illustrate this project's own architecture-diagram-style dungeon map,
+//! per Microsoft's published icon terms — see
+//! [`../../assets/azure-icons/LICENSE-NOTICE.md`] for the full attribution
+//! and terms-of-use notice. Every file is embedded at compile time via
+//! `include_str!` — never fetched or read from disk at runtime — so a saved
 //! `--out` HTML document, and the served map, are fully self-contained and
 //! work offline.
 
@@ -57,6 +57,26 @@ pub fn canonical_key(icon_key: &str) -> &'static str {
         .unwrap_or("mystery-chest")
 }
 
+/// The `viewBox` attribute value declared on a bundled icon's outer `<svg>`
+/// element (e.g. `"0 0 18 18"` for the official Azure Architecture Icons,
+/// which all share that coordinate space). Used so the shared `<symbol>`
+/// wrapping an icon's inner markup in `render.rs` declares a `viewBox`
+/// matching the icon's *own* coordinate space — a mismatch here (e.g.
+/// hardcoding `"0 0 24 24"` for an 18x18 icon) would silently crop or
+/// mis-scale every icon on the rendered map. Falls back to the icon's
+/// natural size if no `viewBox` attribute is present.
+pub fn view_box(svg_key: &str) -> String {
+    let svg = svg_for(svg_key);
+    extract_view_box(svg).unwrap_or_else(|| "0 0 24 24".to_string())
+}
+
+fn extract_view_box(svg: &str) -> Option<String> {
+    let needle = "viewBox=\"";
+    let start = svg.find(needle)? + needle.len();
+    let end = svg[start..].find('"')? + start;
+    Some(svg[start..end].to_string())
+}
+
 /// Strip the outer `<svg ...> ... </svg>` wrapper from a bundled icon
 /// document, leaving just its inner markup — used to nest an icon's shapes
 /// inside a shared `<symbol>` definition (referenced via `<use>`) rather
@@ -103,5 +123,25 @@ mod tests {
             assert!(svg.contains("<svg"));
             assert!(svg.contains("</svg>"));
         }
+    }
+
+    #[test]
+    fn every_bundled_icon_declares_a_view_box() {
+        // The official Azure Architecture Icons all share an "0 0 18 18"
+        // coordinate space; asserting this catches an icon file that was
+        // swapped in without checking it matches the rest of the set (which
+        // would otherwise silently mis-scale on the rendered map).
+        for (key, _) in ICONS {
+            assert_eq!(
+                view_box(key),
+                "0 0 18 18",
+                "icon {key} has an unexpected viewBox"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_key_view_box_falls_back_to_mystery_chest() {
+        assert_eq!(view_box("nonexistent"), view_box("mystery-chest"));
     }
 }

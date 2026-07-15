@@ -62,8 +62,9 @@ pub fn render_html(map: &DungeonMap) -> String {
             let key = icon_assets::canonical_key(&res.icon);
             if defined_icons.insert(key) {
                 svg_icon_defs.push_str(&format!(
-                    "<symbol id=\"icon-{key}\" viewBox=\"0 0 24 24\">{inner}</symbol>",
+                    "<symbol id=\"icon-{key}\" viewBox=\"{view_box}\">{inner}</symbol>",
                     key = key,
+                    view_box = icon_assets::view_box(key),
                     inner = icon_assets::inner_markup(key),
                 ));
             }

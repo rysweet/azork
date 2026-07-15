@@ -211,8 +211,8 @@ dungeon rather than a graph.
 
 ## Azure architecture icons
 
-Every resource node is drawn using an **original, hand-authored monochrome
-line icon** — not Microsoft's copyrighted icon artwork — looked up from its
+Every resource node is drawn using one of Microsoft's **official Azure
+Architecture Icons** ("Azure Public Service Icons" set), looked up from its
 Azure resource type (e.g. `Microsoft.Storage/storageAccounts`,
 `Microsoft.Compute/virtualMachines`, `Microsoft.Network/virtualNetworks`,
 `Microsoft.Web/sites`, `Microsoft.KeyVault/vaults`,
@@ -220,33 +220,30 @@ Azure resource type (e.g. `Microsoft.Storage/storageAccounts`,
 `Microsoft.DocumentDB/databaseAccounts`, and more) via the same type → icon
 registry that also drives [suggested `az` commands](#suggested-az-commands).
 
-- **Icons are original AzZork artwork, not vendored Microsoft assets.**
-  Microsoft's published Azure Architecture Icons terms permit using them *to
-  build your own diagrams*, but do not grant a license to redistribute the
-  SVG files themselves as a bundled asset library inside a third-party
-  repo/binary — which is exactly what compiling `include_str!`-embedded
-  copies of them into `azork` would be. To stay clearly on the right side of
-  that line, each icon under [`assets/azure-icons/`](../assets/azure-icons/)
-  is a simple, hand-drawn monochrome glyph created for this project (e.g. a
-  stacked-cylinder motif for storage, a rack silhouette for a VM) that
-  evokes the resource category without copying Microsoft's icon shapes,
-  proportions, or color palette.
+- **Icons are Microsoft's official Azure Architecture Icons**, downloaded
+  from [learn.microsoft.com/azure/architecture/icons](https://learn.microsoft.com/en-us/azure/architecture/icons/)
+  and used unmodified — not cropped, flipped, rotated, distorted, or
+  recolored — to label each resource's type on the dungeon map, consistent
+  with Microsoft's published icon guidelines for architecture diagrams.
 - **Icons are bundled in the repo, not hotlinked.** The SVGs are embedded
-  directly into the crate at compile time. The rendered map never fetches an
-  icon from a CDN or any third-party site at run time, so a saved `--out`
-  file or a `--serve` session works identically with no network at all.
+  directly into the crate at compile time via `include_str!` (see
+  [`src/dungeon/icon_assets.rs`](../src/dungeon/icon_assets.rs)). The
+  rendered map never fetches an icon from a CDN or any third-party site at
+  run time, so a saved `--out` file or a `--serve` session works identically
+  with no network at all.
 - **Attribution and terms** are recorded in
   [`assets/azure-icons/LICENSE-NOTICE.md`](../assets/azure-icons/LICENSE-NOTICE.md):
-  the icons are original works owned by this project, not Microsoft assets.
-  The notice also disclaims any Microsoft affiliation/endorsement, since the
-  resource *type names* they label are still Azure product names.
-- **Unknown/unrecognized resource types** get a sensible default "mystery
-  chest" icon rather than failing or omitting the resource from the map, so
-  an unexpected or newly-released resource type never breaks the crawl.
+  the icon files remain Microsoft's property, AzZork is not affiliated with
+  or endorsed by Microsoft, and the icons must not be used to represent
+  non-Microsoft products.
+- **Unknown/unrecognized resource types** get Microsoft's generic "All
+  Resources" icon (bundled as `mystery-chest.svg`) rather than failing or
+  omitting the resource from the map, so an unexpected or newly-released
+  resource type never breaks the crawl.
 - The registry is a simple, inspectable table (type prefix → icon key →
   suggested `az` command) in [`src/dungeon/type_table.rs`](../src/dungeon/type_table.rs),
   so adding or overriding an icon (or its suggested command) for a type is a
-  one-line change plus dropping in the corresponding SVG file — see
+  one-line change plus dropping in the corresponding official SVG file — see
   [Suggested `az` commands](#suggested-az-commands) for how the two stay in
   sync.
 - Icons appear in two places, both driven by the same lookup: as a small tile
