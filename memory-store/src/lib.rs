@@ -50,6 +50,7 @@ use std::path::Path;
 
 use amplihack_memory::{Experience, ExperienceType, MemoryConnector};
 use azork::memory::{GraphMemory, MemoryKind, MemoryNode};
+use azork::secrets::scrub;
 use serde_json::{json, Value};
 
 /// Durable, SQLite-backed persistent store for an AzZork [`GraphMemory`].
@@ -186,10 +187,19 @@ fn clip(s: &str, max: usize, fallback: &str) -> String {
 
 /// Convert an AzZork node (plus its outgoing edges) into an [`Experience`].
 fn node_to_experience(node: &MemoryNode, edges: Vec<Value>) -> StoreResult<Experience> {
+    // Defense-in-depth: `GraphMemory::remember` already scrubs `label`/`content`
+    // before a node is created (see `azork::memory`), but `scrub` is idempotent
+    // and cheap, so we scrub again at this durable-store boundary rather than
+    // trust that every `MemoryNode` reaching `save` was built through
+    // `remember`. This mirrors the scrubbing already wired into the `az`
+    // output paths (`azork::backend::az`, `azork::capabilities::derive`).
+    let label = scrub(&node.label);
+    let content = scrub(&node.content);
+
     // amplihack-memory caps context at 500 and outcome at 1000 chars; clip to fit
     // and never let either be empty (both are required).
-    let context = clip(&node.label, 500, &node.id);
-    let outcome = clip(&node.content, 1000, &node.label);
+    let context = clip(&label, 500, &node.id);
+    let outcome = clip(&content, 1000, &label);
     let mut exp = Experience::new(
         kind_to_type(node.kind),
         context,
@@ -358,5 +368,43 @@ mod tests {
         let restored = store.load().unwrap();
         // De-dup by id: still exactly one room, not two.
         assert_eq!(restored.nodes_of_kind(MemoryKind::Room).len(), 1);
+    }
+
+    #[test]
+    fn save_scrubs_secret_shaped_content_before_persisting() {
+        use azork::secrets::test_fixtures::HOSTILE_TOKEN;
+
+        // GraphMemory::remember already scrubs, so simulate a node that
+        // bypassed that path (e.g. hand-built or restored from an untrusted
+        // source) to prove `PersistentStore::save` scrubs independently at
+        // this durable-store boundary too.
+        let mut mem = GraphMemory::new();
+        mem.insert_node(MemoryNode {
+            id: "n1".to_string(),
+            kind: MemoryKind::Friction,
+            label: "friction".to_string(),
+            content: format!("client_secret={HOSTILE_TOKEN}"),
+            tags: vec!["x".to_string()],
+            importance: 0.9,
+            usage_count: 0,
+            last_touch: 1,
+        });
+
+        let dir = TempDir::new().unwrap();
+        let mut store = PersistentStore::open("azork-scrub-test", dir.path()).unwrap();
+        store.save(&mem).unwrap();
+
+        let restored = store.load().unwrap();
+        let friction = restored.nodes_of_kind(MemoryKind::Friction);
+        assert_eq!(friction.len(), 1);
+        assert!(!friction[0].content.contains(HOSTILE_TOKEN));
+        assert!(friction[0].content.contains("***REDACTED***"));
+
+        // Also confirm the raw secret never reached the durable store's own
+        // full-text index (recall), not just the reconstructed node.
+        let hits = store.recall("client_secret", 10).unwrap();
+        for (_, outcome) in &hits {
+            assert!(!outcome.contains(HOSTILE_TOKEN));
+        }
     }
 }

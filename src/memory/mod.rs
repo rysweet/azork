@@ -23,6 +23,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::secrets::scrub;
+
 /// The kind of thing a memory node represents.
 ///
 /// Kept backend-neutral (à la Simard's [`MemoryKind`]) so a richer store can
@@ -153,15 +155,18 @@ impl GraphMemory {
 
     /// Remember a node, returning its stable id.
     ///
-    /// This is the single choke point through which every recorder
+    /// `label` and `content` are free text that may originate from user input
+    /// or `az` CLI output; both are passed through
+    /// [`scrub`](crate::secrets::scrub) before being stored, so a stray
+    /// secret never lands in the in-memory graph or its on-disk save format
+    /// (see [`Self::save`]). This is the single choke point every recorder
     /// (`record_friction`, `record_intent`, `remember_capability`,
-    /// `remember_room`, `remember_resource`) creates a `MemoryNode`, and it
-    /// scrubs `label`/`content` via `crate::secrets::scrub` before the node
-    /// is inserted so that no secret-shaped text reaches in-memory state or
-    /// `save()`'s on-disk output. **Maintenance invariant:** any future
-    /// node-creation path must route through `remember()` rather than
-    /// constructing a `MemoryNode` directly — bypassing it would skip
-    /// scrubbing and reopen the gap tracked as issue #17.
+    /// `remember_room`, `remember_resource`) funnels through.
+    ///
+    /// **Maintenance invariant:** any future node-creation path must route
+    /// through `remember()` rather than constructing a `MemoryNode`
+    /// directly — bypassing it would skip scrubbing and reopen the gap
+    /// tracked as issue #17.
     pub fn remember(
         &mut self,
         kind: MemoryKind,
@@ -176,8 +181,8 @@ impl GraphMemory {
         let node = MemoryNode {
             id: id.clone(),
             kind,
-            label: label.to_string(),
-            content: content.to_string(),
+            label: scrub(label),
+            content: scrub(content),
             tags: tags.iter().map(|t| t.to_string()).collect(),
             importance: importance.clamp(0.0, 1.0),
             usage_count: 0,
@@ -607,6 +612,61 @@ mod tests {
         let mut mem = GraphMemory::new();
         mem.remember(MemoryKind::Room, "rg", "a room", &[], 0.5);
         assert!(mem.recall("   ", None, 5).is_empty());
+    }
+
+    #[test]
+    fn remember_scrubs_secret_shaped_content_and_label() {
+        use crate::secrets::test_fixtures::{HOSTILE_ACCOUNT_KEY_VALUE, HOSTILE_TOKEN};
+
+        let mut mem = GraphMemory::new();
+        let label = format!("token: {HOSTILE_TOKEN}");
+        let content = format!(
+            "DefaultEndpointsProtocol=https;AccountKey={HOSTILE_ACCOUNT_KEY_VALUE};EndpointSuffix=core.windows.net"
+        );
+        let id = mem.remember(MemoryKind::Friction, &label, &content, &[], 0.9);
+
+        let node = mem.get(&id).unwrap();
+        assert!(!node.label.contains(HOSTILE_TOKEN));
+        assert!(!node.content.contains(HOSTILE_ACCOUNT_KEY_VALUE));
+        assert!(node.content.contains("AccountKey=***REDACTED***"));
+    }
+
+    #[test]
+    fn record_friction_scrubs_secret_shaped_note() {
+        use crate::secrets::test_fixtures::HOSTILE_TOKEN;
+
+        let mut mem = GraphMemory::new();
+        let note = format!("saw a leaked client_secret={HOSTILE_TOKEN} in az output");
+        let id = mem.record_friction(&note, &["az"]);
+
+        let node = mem.get(&id).unwrap();
+        assert!(!node.content.contains(HOSTILE_TOKEN));
+        assert!(node.content.contains("***REDACTED***"));
+    }
+
+    #[test]
+    fn save_and_load_round_trip_never_reintroduces_secret() {
+        use crate::secrets::test_fixtures::HOSTILE_TOKEN;
+        use std::env;
+
+        let mut mem = GraphMemory::new();
+        let note = format!("password={HOSTILE_TOKEN}");
+        mem.record_friction(&note, &["x"]);
+
+        let mut path = env::temp_dir();
+        path.push(format!(
+            "azork-memory-scrub-test-{}.mem",
+            std::process::id()
+        ));
+        mem.save(&path).expect("save should succeed");
+
+        let restored = GraphMemory::load(&path);
+        let _ = fs::remove_file(&path);
+
+        let friction = restored.nodes_of_kind(MemoryKind::Friction);
+        assert_eq!(friction.len(), 1);
+        assert!(!friction[0].content.contains(HOSTILE_TOKEN));
+        assert!(friction[0].content.contains("***REDACTED***"));
     }
 
     #[test]
