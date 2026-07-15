@@ -203,6 +203,35 @@ Rooms beyond the cap are still navigable; their contents are lazily summarised.
 > game (`drop`) operate on the in-memory world model only — AzZork does not
 > delete real Azure resources.
 
+
+## Dungeon Crawler Mode 🗺️
+
+Prefer a map to a REPL? `azork crawl` (alias `azork dungeon`) turns your whole
+subscription into a single explorable, hand-drawn-style dungeon map instead of
+one resource group at a time: resource groups become rooms, resources become
+icons on the floor, and shared regions/relationships become corridors.
+
+```bash
+azork crawl --backend az --serve
+```
+
+```
+🗺  Mapping subscription "Contoso-Prod" ...
+    Discovered 14 resource groups, 87 resources.
+🕯  Dungeon assembled. Serving map at http://127.0.0.1:53214
+```
+
+Open the printed URL and click any room to pop up its contents: each resource
+shows its icon, a deep link straight to that resource's page in the Azure
+portal, and one or more suggested read-only `az` commands to inspect it
+(display-only — nothing is ever executed for you).
+
+It is **strictly read-only** (only `list`/`show`-class `az` calls), uses the
+same `AzRunner` seam as the rest of AzZork, validates resource IDs before
+building deep links or command suggestions, scrubs secret-shaped text from the
+rendered output, and binds its local server to loopback only. Full details:
+[docs/DUNGEON-CRAWLER.md](docs/DUNGEON-CRAWLER.md).
+
 ## Outside-in-testing (OIT) agent 🤖
 
 `azork-oit` is a companion binary (`src/bin/azork-oit.rs`) that drives AzZork like
@@ -400,6 +429,7 @@ Full documentation lives in [`docs/`](docs/):
 - [Self-Update guide](docs/UPDATING.md) — the `azork update` command, the cached startup check, security/trust model, and release flow.
 - [Development guide](docs/DEVELOPMENT.md) — pre-commit hooks, CI, and test coverage.
 - [API / module reference](docs/API.md) — internal architecture for contributors.
+- [Dungeon Crawler Mode](docs/DUNGEON-CRAWLER.md) — the map view: `azork crawl`, icons, the local server, and interactive room pop-ups.
 - [Security policy](SECURITY.md) — threat model, guarantees, and how to report vulnerabilities.
 - [Security audit](docs/SECURITY-AUDIT.md) — findings, fixes, and verification results.
 

@@ -277,8 +277,7 @@ fn redact_jwt_like(line: &str) -> String {
 /// Per `.gitguardian.yaml`, `src/secrets.rs` is the *only* path exempted from
 /// scanning, so every such literal must live here — callers reference these
 /// constants instead of embedding the shapes themselves.
-#[cfg(test)]
-pub(crate) mod test_fixtures {
+pub mod test_fixtures {
     /// A fake opaque token, shaped like a client secret/PAT.
     pub const HOSTILE_TOKEN: &str = "abc123SECRETXYZ";
     /// A fake Azure Storage `AccountKey=` connection-string fragment.

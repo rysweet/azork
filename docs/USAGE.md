@@ -6,6 +6,7 @@ Zork-style dungeon. This guide covers everything you can do at the `az>` prompt.
 - New here? Start with the [Tutorial](TUTORIAL.md).
 - Configuring backends and environment? See the [Configuration reference](CONFIGURATION.md).
 - Embedding or extending the engine? See the [API / module reference](API.md).
+- Prefer the map view? See [Dungeon Crawler Mode](DUNGEON-CRAWLER.md) for `azork crawl`.
 
 ## Starting the game
 

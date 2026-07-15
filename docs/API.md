@@ -2,7 +2,7 @@
 
 This reference documents the internal architecture of AzZork for contributors
 and anyone embedding the engine. AzZork is a single binary crate (`azork`) with
-**zero external dependencies** — the standard library only.
+**a small set of external dependencies** for JSON parsing, rendering, and update verification; the core game logic still stays dependency-light.
 
 For player-facing docs see the [Usage guide](USAGE.md) and
 [Configuration reference](CONFIGURATION.md).
@@ -21,6 +21,15 @@ src/
 │   └── registry.rs    CapabilityRegistry: lookup, suggest, help_text, cache I/O
 ├── agent/
 │   └── mod.rs         IntentResolver + Adapter trait + offline MockAdapter
+├── dungeon/
+│   ├── mod.rs         Dungeon Crawler Mode wiring
+│   ├── map.rs         Read-only subscription -> dungeon graph builder
+│   ├── render.rs      Native HTML/SVG renderer (scrubbed, deterministic)
+│   ├── server.rs      Loopback-only local HTTP server + JSON API
+│   ├── commands.rs    Read-only `az` suggestion builder + validation
+│   ├── links.rs       Azure portal deep links with ARM-id validation
+│   ├── cli.rs         `azork crawl` / `azork dungeon` argument parsing
+│   └── playwright.rs  Optional best-effort browser renderer
 ├── memory/
 │   └── mod.rs         GraphMemory: dependency-free, ladybug-style persistent graph memory
 ├── oit/                Outside-In-Testing agent library core (pure, offline-testable)
@@ -64,9 +73,8 @@ input ──parser::parse──▶ Command ──main::handle──▶ World mut
 Backend::build_world ────────────────────────────────────────────────┘ (once, at startup)
 ```
 
-All `az` access — both the live `AzBackend` and capability derivation — passes
-through the `AzRunner` trait, so tests inject a `FakeAzRunner` and never touch
-the real CLI or network.
+All `az` access — the live `AzBackend`, capability derivation, and Dungeon Crawler Mode's map enumeration — passes through the `AzRunner` trait, so tests inject a `FakeAzRunner`
+and never touch the real CLI or network.
 
 ## `parser` module
 
@@ -410,6 +418,9 @@ External test files (in `tests/`, exercising the public contract):
 - **`evolution_tests.rs`** — self-evolution: deriving a brand-new capability with
   no code edit, persistence/recall across sessions, non-failing intent
   resolution, and driving `AzBackend` from a `FakeAzRunner` — all offline.
+- **`dungeon_tests.rs`** — Dungeon Crawler Mode: fake-`az` map building,
+  read-only command validation, portal-link validation, scrubbed SVG/HTML
+  rendering, loopback-only server responses, and popup/resource-detail JSON.
 - **`memory_tests.rs`** — `GraphMemory` persistence, recall ranking, and
   cross-session accumulation via the public API.
 - **update_*.rs** (`update_startup_tests.rs`, `update_stamp_tests.rs`,
