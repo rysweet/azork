@@ -1,6 +1,6 @@
 //! Optional companion crate: **durable graph memory** for AzZork, backed by the
-//! external [`amplihack-memory`] store (the same SQLite/lbug-capable memory
-//! library Simard uses).
+//! external [`amplihack-memory`] store (the same SQLite/lbug-capable native
+//! cognitive-memory library).
 //!
 //! AzZork's own [`GraphMemory`](azork::memory::GraphMemory) is a small,
 //! dependency-free, offline brick with a hand-rolled on-disk format. This crate

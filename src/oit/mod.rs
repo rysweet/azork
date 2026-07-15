@@ -5,8 +5,8 @@
 //! the [`usecases`] catalog and friction-detection heuristics, and the
 //! [`report`] renderer. The live orchestration that shells out to `az` and drives
 //! the `azork` binary lives in the `azork-oit` binary (`src/bin/azork-oit.rs`),
-//! which mirrors the recipe-runner-driven agent architecture of Simard and
-//! Powderfinger: a deterministic library core with a thin live driver on top.
+//! which follows the same deterministic-core-with-a-thin-live-driver pattern
+//! used by the recipe-runner-driven agents elsewhere in this crate.
 
 pub mod guardrails;
 pub mod report;

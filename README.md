@@ -85,8 +85,9 @@ self-evolution machinery is exercised offline in tests with canned `az` output �
 
 ## Graph memory 🧠
 
-AzZork carries a persistent, ladybug-style **graph memory** (patterned after
-Simard's cognitive memory) that accumulates across sessions:
+AzZork carries a persistent, ladybug-style **graph memory** (a lightweight
+cognitive-memory model of typed nodes with ranked recall) that accumulates
+across sessions:
 
 - **Rooms** (resource groups), **objects** (resources), **verbs** (learned az
   capabilities), **intents** (free-text you typed), and **friction** notes are
@@ -233,31 +234,20 @@ building deep links or command suggestions, scrubs secret-shaped text from the
 rendered output, and binds its local server to loopback only. Full details:
 [docs/DUNGEON-CRAWLER.md](docs/DUNGEON-CRAWLER.md).
 
-## Outside-in-testing (OIT) agent 🤖
+**Real subscription, mapped:**
 
-`azork-oit` is a companion binary (`src/bin/azork-oit.rs`) that drives AzZork like
-a real user against a **live** subscription to find friction, then feeds fixes back
-into AzZork. It exercises a broad, creative catalog of use cases (navigation,
-examination, governance scoring, securing, mock deployment, and dynamically-derived
-capabilities) and records anything confusing or missing.
+![Dungeon map overview — resource groups as rooms, resources as icons](docs/images/crawl-map-overview.png)
 
-It enforces hard **guardrails in code** (`src/oit/guardrails.rs`):
+Zoomed in, room labels are resource-group names and the icon codes identify
+resource types (e.g. `SA` storage account, `VN` virtual network, `VM` virtual
+machine, `KV` key vault, `CD` Cosmos DB):
 
-1. **Cost** — estimates cost before every create and refuses anything over $500;
-   prefers free/cheap SKUs (resource groups, `Standard_LRS` storage).
-2. **Cleanup** — everything it creates is torn down idempotently and verified
-   absent. Every resource is tagged `azork-oit=1`, `owner=azork-oit`, `ttl=...`.
-3. **Non-destructive** — it only ever touches resources bearing *its own* tags;
-   it never mutates or deletes anything it did not create.
-4. **Isolation** — all test resources live in dedicated `azork-oit-*` resource
-   groups in a cheap region (eastus) for easy bulk cleanup.
+![Dungeon map zoomed in — readable room labels and resource icons](docs/images/crawl-map-zoom.png)
 
-```bash
-cargo build --bin azork-oit
-./target/debug/azork-oit --report docs/oit-friction-report.md
-```
+Clicking a resource pops up its details — name, type, a deep link to the Azure
+portal, and a suggested read-only `az` command:
 
-Its findings are written to [`docs/oit-friction-report.md`](docs/oit-friction-report.md).
+![Resource detail pop-up with portal link and suggested az command](docs/images/crawl-resource-popup.png)
 
 ## Azure CLI extension (`az azork`) — optional
 
@@ -342,50 +332,7 @@ az> look
 *** You have died. ***
 ```
 
-## Architecture
-
-Idiomatic Rust modules:
-
-```
-src/
-├── main.rs            binary: REPL, intro banner, backend selection, confirmations, Grue turns
-├── lib.rs             library crate root re-exporting parser, world, backend, az_runner, capabilities, agent
-├── parser.rs          command parser: verbs, directions, aliases (+ unit tests)
-├── world.rs           world model: rooms, resources, hazards, scoring, Grue mechanic (+ unit tests)
-├── az_runner.rs       the single seam for invoking `az` (ProcessAzRunner / FakeAzRunner)
-├── capabilities/
-│   ├── mod.rs         Capability type
-│   ├── derive.rs      parse `az --help` / `az <group> --help` into capabilities
-│   └── registry.rs    CapabilityRegistry: lookup, suggestions, help text, on-disk cache
-├── agent/
-│   └── mod.rs         IntentResolver + Adapter trait + offline MockAdapter
-├── memory/
-│   └── mod.rs         GraphMemory: ladybug-style persistent graph memory
-├── oit/               outside-in-testing agent (guardrails, use cases, report)
-├── bin/
-│   └── azork-oit.rs   live OIT driver (creates tagged cheap resources, tears down)
-└── backend/
-    ├── mod.rs         Backend trait + selection
-    ├── mock.rs        default offline synthetic estate (+ unit tests)
-    └── az.rs          optional live backend (bounded), driven through an AzRunner
-
-tests/                 external contract & integration tests (drive the public API)
-├── parser_tests.rs    parser verb/alias/edge-case contract
-├── world_tests.rs     world-model behaviour & edge cases
-├── backend_tests.rs   backend selection + mock estate invariants
-├── integration_tests.rs  end-to-end typed-session workflows
-└── evolution_tests.rs    self-evolution: derive/persist/resolve with a fake `az`
-```
-
-The engine is split into a thin `azork` binary and an `azork` library crate.
-The `Backend` trait cleanly separates *where the map comes from* (mock vs. live
-Azure) from the game engine, so the world model and parser are fully testable
-without any Azure dependency. All `az` invocation is funnelled through the
-`AzRunner` seam, letting the capability-derivation and intent-resolution paths be
-exercised offline with canned CLI output — from both colocated unit tests and the
-external `tests/` suite.
-
-### Third-party dependencies
+## Third-party dependencies
 
 The core game, self-evolution, and graph memory add no license obligations
 beyond the small set of dependencies in the main `Cargo.toml`. The default

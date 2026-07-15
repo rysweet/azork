@@ -2,7 +2,8 @@
 //!
 //! TDD contract for AzZork's **graph memory** — the persistent, ladybug-style
 //! cognitive memory that lets the game *evolve as it is used* (mirroring the
-//! Simard `CognitiveMemoryOps` / `MemoryKind` / `RecallWeightSet` pattern).
+//! `CognitiveMemoryOps` / `MemoryKind` / `RecallWeightSet` pattern of a typed,
+//! ranked-recall memory model).
 //!
 //! These tests pin the *offline, in-memory* behaviour that the default build and
 //! CI always exercise: the store is deterministic (a monotonic tick drives

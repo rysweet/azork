@@ -1,7 +1,7 @@
 //! Persistent graph memory — AzZork's cognitive spine.
 //!
 //! This is the ladybug-style memory that lets the game *evolve as it is used*.
-//! It mirrors the Simard cognitive-memory pattern ([`MemoryKind`],
+//! It implements a lightweight cognitive-memory model ([`MemoryKind`],
 //! [`RecallWeights`], ranked recall with reinforcement) but stays a small,
 //! dependency-free, fully-offline brick by default:
 //!
@@ -10,8 +10,8 @@
 //!   (a monotonic tick, not wall-clock time, drives recency). This is what the
 //!   default `cargo build`/`cargo test` and CI exercise.
 //! * A future, opt-in `persistent` Cargo feature will swap in the native
-//!   `lbug`-backed `amplihack-memory` store behind the same shape, per the
-//!   Simard architecture. That backend never links into the default build.
+//!   `lbug`-backed `amplihack-memory` store behind the same shape, keeping the
+//!   same backend-neutral design. That backend never links into the default build.
 //!
 //! The memory stores the four things the game learns as it is played:
 //! discovered `az` **capabilities**, the resource graph (resource groups are
@@ -27,8 +27,8 @@ use crate::secrets::scrub;
 
 /// The kind of thing a memory node represents.
 ///
-/// Kept backend-neutral (à la Simard's [`MemoryKind`]) so a richer store can
-/// slot in behind the same enum without touching callers.
+/// Kept backend-neutral so a richer store can slot in behind the same enum
+/// without touching callers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryKind {
     /// A learned `az` capability (a verb the game understands).
@@ -69,7 +69,7 @@ impl MemoryKind {
     }
 }
 
-/// Per-term weights for ranked recall (mirrors Simard's `RecallWeightSet`).
+/// Per-term weights for ranked recall.
 ///
 /// Weights are un-normalized — only relative magnitudes matter. Each scales one
 /// scoring term blended in [`GraphMemory::recall_ranked`].
