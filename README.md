@@ -312,6 +312,10 @@ virtual network, virtual machine, key vault, Cosmos DB, and more) — see
 *Clicking a resource icon pops up its full-size icon, name, type, an "Open in
 Azure Portal" link, and a suggested read-only `az` command to inspect it.*
 
+(Maintainers: these screenshots can be regenerated locally against the mock
+backend with [`scripts/capture-screenshots.sh`](scripts/capture-screenshots.sh)
+— a manual, offline tool that is never run in CI.)
+
 It is **strictly read-only** (only `list`/`show`-class `az` calls), uses the
 same `AzRunner` seam as the rest of AzZork, validates resource IDs before
 building deep links or command suggestions, scrubs secret-shaped text from the
