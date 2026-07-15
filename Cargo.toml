@@ -1,6 +1,6 @@
 [package]
 name = "azork"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 description = "AzZork: the Azure control plane reimagined as a Zork-style text adventure."
 license = "MIT"
