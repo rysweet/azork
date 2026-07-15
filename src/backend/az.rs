@@ -61,6 +61,8 @@ impl AzBackend {
 
     /// Perform a single `az` invocation. Returns `(message, retryable)` on error.
     fn run_once(&self, args: &[&str]) -> Result<String, (String, bool)> {
+        use std::io::Read;
+
         let mut child = Command::new("az")
             .args(args)
             .stdin(Stdio::null())
@@ -76,22 +78,34 @@ impl AzBackend {
                 )
             })?;
 
+        // Drain stdout/stderr concurrently on background threads. The pipes'
+        // OS buffers are only ~64KB; `az resource list` on a busy
+        // subscription can easily exceed that, and without draining while we
+        // wait, the child would block inside its own write() the moment the
+        // buffer fills — `try_wait()` would then never observe an exit, and
+        // a slow-but-successful command would be misreported as a timeout.
+        let mut stdout_pipe = child.stdout.take().expect("stdout was piped");
+        let mut stderr_pipe = child.stderr.take().expect("stderr was piped");
+        let stdout_thread = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stdout_pipe.read_to_end(&mut buf);
+            buf
+        });
+        let stderr_thread = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stderr_pipe.read_to_end(&mut buf);
+            buf
+        });
+
         let deadline = Instant::now() + AZ_CALL_TIMEOUT;
-        loop {
+        let status = loop {
             match child.try_wait() {
-                Ok(Some(_status)) => break,
+                Ok(Some(status)) => break Some(status),
                 Ok(None) => {
                     if Instant::now() >= deadline {
                         let _ = child.kill();
                         let _ = child.wait();
-                        return Err((
-                            format!(
-                                "'az {}' timed out after {}s (killed)",
-                                args.join(" "),
-                                AZ_CALL_TIMEOUT.as_secs()
-                            ),
-                            true,
-                        ));
+                        break None;
                     }
                     sleep(AZ_POLL_INTERVAL);
                 }
@@ -99,17 +113,33 @@ impl AzBackend {
                     return Err((format!("failed to wait on 'az' process: {}", e), true));
                 }
             }
-        }
+        };
 
-        let output = child
-            .wait_with_output()
-            .map_err(|e| (format!("failed to read 'az' output: {}", e), true))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        // Join the reader threads regardless of outcome: killing the child
+        // closes its end of the pipes, so `read_to_end` returns promptly.
+        let stdout = stdout_thread.join().unwrap_or_default();
+        let stderr = stderr_thread.join().unwrap_or_default();
+
+        let status = match status {
+            Some(status) => status,
+            None => {
+                return Err((
+                    format!(
+                        "'az {}' timed out after {}s (killed)",
+                        args.join(" "),
+                        AZ_CALL_TIMEOUT.as_secs()
+                    ),
+                    true,
+                ));
+            }
+        };
+
+        if !status.success() {
+            let stderr = String::from_utf8_lossy(&stderr);
             let msg = format!("'az {}' failed: {}", args.join(" "), stderr.trim());
             return Err((msg, is_transient(&stderr)));
         }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        Ok(String::from_utf8_lossy(&stdout).into_owned())
     }
 }
 
