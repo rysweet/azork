@@ -116,7 +116,7 @@ fn main() {
         return;
     }
 
-    let requested_backend = resolve_backend_id();
+    let requested_backend = resolve_backend_id(&args);
     if let Some(id) = &requested_backend {
         if !backend::is_recognized(id) {
             eprintln!(
@@ -282,8 +282,7 @@ fn reject_unrecognized_args_or_exit(args: &[String]) {
 /// the mock estate. An explicit-but-empty request (e.g. a trailing `--backend`
 /// with no value) yields `Some("")`, which the caller treats as unrecognized
 /// and warns about rather than silently defaulting.
-fn resolve_backend_id() -> Option<String> {
-    let args: Vec<String> = std::env::args().collect();
+fn resolve_backend_id(args: &[String]) -> Option<String> {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
