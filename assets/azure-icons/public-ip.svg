@@ -1,0 +1,4 @@
+<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="azicon" role="img" aria-label="Public IP address">
+<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<path d="M4 9 h16 M4 15 h16 M12 3 a14 9 0 0 1 0 18 a14 9 0 0 1 0 -18" fill="none" stroke="currentColor" stroke-width="1"/>
+</svg>

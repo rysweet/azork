@@ -247,6 +247,7 @@ pub fn build_cancellable(
         });
     }
 
+    resolve_room_collisions(&mut rooms);
     let edges = same_region_edges(&rooms);
 
     Ok(DungeonMap {
@@ -270,14 +271,84 @@ fn subscription_from_id(resource_id: &str) -> Option<String> {
 
 /// A stable, non-random grid position derived purely from `(name, region)`.
 /// Never influenced by enumeration order or process/run state, so the same
-/// subscription always lays out identically.
+/// subscription always lays out identically. The grid is deliberately small
+/// (a compact dungeon "wing" per hash bucket, not a sprawling estate) so a
+/// handful of resource groups draw as a tight, walkable dungeon rather than
+/// a few rooms scattered across a mostly-empty parchment; any collisions
+/// this creates between unrelated rooms are resolved afterwards by
+/// [`resolve_room_collisions`].
 fn deterministic_position(name: &str, region: &str) -> (i32, i32) {
     let mut hasher = DefaultHasher::new();
     (name, region).hash(&mut hasher);
     let h = hasher.finish();
-    let x = ((h & 0xFFFF) % 24) as i32;
-    let y = (((h >> 16) & 0xFFFF) % 24) as i32;
+    let x = ((h & 0xFFFF) % 6) as i32;
+    let y = (((h >> 16) & 0xFFFF) % 6) as i32;
     (x, y)
+}
+
+/// Resolve any rooms whose hash-derived [`deterministic_position`] collided
+/// with another room's, by walking them (in a stable, name-sorted order) to
+/// the nearest free cell in an outward ring search. Since this only ever
+/// runs over the *complete* room set already gathered for one build, and
+/// visits rooms in a fixed (id-sorted) order, two builds of the same room
+/// set always resolve collisions identically — determinism is preserved,
+/// just no longer a function of a single room in isolation once a
+/// collision has to be broken.
+fn resolve_room_collisions(rooms: &mut [Room]) {
+    let mut order: Vec<usize> = (0..rooms.len()).collect();
+    order.sort_by(|&a, &b| rooms[a].id.cmp(&rooms[b].id));
+
+    let mut occupied: std::collections::HashSet<(i32, i32)> = std::collections::HashSet::new();
+    for idx in order {
+        let mut pos = (rooms[idx].x, rooms[idx].y);
+        if occupied.contains(&pos) {
+            pos = nearest_free_cell(pos, &occupied);
+        }
+        occupied.insert(pos);
+        rooms[idx].x = pos.0;
+        rooms[idx].y = pos.1;
+    }
+}
+
+/// Find the nearest free cell to `origin` by searching outward ring by ring
+/// (Chebyshev distance 1, 2, 3, ...), scanning each ring in a fixed
+/// deterministic order (top edge left-to-right, right edge top-to-bottom,
+/// bottom edge right-to-left, left edge bottom-to-top).
+fn nearest_free_cell(
+    origin: (i32, i32),
+    occupied: &std::collections::HashSet<(i32, i32)>,
+) -> (i32, i32) {
+    for radius in 1..64 {
+        for (dx, dy) in ring_offsets(radius) {
+            let candidate = (origin.0 + dx, origin.1 + dy);
+            if candidate.0 >= 0 && candidate.1 >= 0 && !occupied.contains(&candidate) {
+                return candidate;
+            }
+        }
+    }
+    // Unreachable in practice (a subscription would need more resource
+    // groups than there are cells in a 128x128 search area), but a safe,
+    // deterministic fallback rather than a panic.
+    origin
+}
+
+/// Offsets of every cell on the square ring at Chebyshev distance `radius`
+/// from the origin, in a fixed deterministic order.
+fn ring_offsets(radius: i32) -> Vec<(i32, i32)> {
+    let mut offsets = Vec::with_capacity((radius * 8) as usize);
+    for dx in -radius..=radius {
+        offsets.push((dx, -radius));
+    }
+    for dy in -radius + 1..=radius {
+        offsets.push((radius, dy));
+    }
+    for dx in (-radius..=radius - 1).rev() {
+        offsets.push((dx, radius));
+    }
+    for dy in (-radius + 1..=radius - 1).rev() {
+        offsets.push((-radius, dy));
+    }
+    offsets
 }
 
 /// Connect every pair of distinct rooms that share a region with one

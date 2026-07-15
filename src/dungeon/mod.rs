@@ -9,6 +9,8 @@
 //! * [`map`] — the serializable map graph (rooms/resources/edges) and the
 //!   read-only, budgeted enumeration that builds it from an [`crate::az_runner::AzRunner`].
 //! * [`icons`] — the single Azure resource type -> icon lookup table.
+//! * [`icon_assets`] — the compile-time-embedded original SVG icon bodies
+//!   each icon key resolves to (see `assets/azure-icons/LICENSE-NOTICE.md`).
 //! * [`commands`] — the (same-table-derived) type -> suggested read-only `az`
 //!   command lookup.
 //! * [`links`] — Azure portal deep-link construction from a resource ID.
@@ -22,6 +24,7 @@
 
 pub mod cli;
 pub mod commands;
+pub mod icon_assets;
 pub mod icons;
 pub mod links;
 pub mod map;

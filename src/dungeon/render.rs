@@ -1,15 +1,20 @@
 //! The native, offline, deterministic dungeon renderer.
 //!
 //! Produces a single self-contained HTML document (inline SVG + a small
-//! amount of vanilla JS — no build step, no CDN fetch) laying rooms out on a
-//! grid with corridor walls and resource icons. Layout is a pure function of
-//! the [`crate::dungeon::DungeonMap`], so the same subscription always
-//! produces the same document. See
-//! `docs/DUNGEON-CRAWLER.md#rendering`.
+//! amount of vanilla JS — no build step, no CDN fetch) laying rooms out as
+//! walled rectilinear chambers on a parchment-and-grid background, joined
+//! by orthogonal corridors with doors, each holding its resources' Azure
+//! architecture icons. Layout is a pure function of the
+//! [`crate::dungeon::DungeonMap`], so the same subscription always produces
+//! the same document. See `docs/DUNGEON-CRAWLER.md#rendering` and
+//! `docs/DUNGEON-CRAWLER.md#why-a-self-designed-renderer-tool-evaluation`
+//! for the tabletop-dungeon-map styling this renderer targets and why it is
+//! self-designed rather than driving a third-party map tool.
 
+use crate::dungeon::icon_assets;
 use crate::dungeon::map::DungeonMap;
 use crate::secrets::scrub;
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// Render `map` to a self-contained HTML document.
 ///
@@ -18,18 +23,22 @@ use std::collections::HashMap;
 /// HTML/SVG-escaped in the output so a hostile name can never inject markup
 /// or script into the page.
 pub fn render_html(map: &DungeonMap) -> String {
-    const CELL: i32 = 140;
-    const ROOM_SIZE: i32 = 110;
+    const CELL: i32 = 150;
+    const ROOM_SIZE: i32 = 116;
+    const WALL: i32 = 4;
+    const ICON_SIZE: i32 = 20;
 
     let mut svg_rooms = String::new();
-    let mut svg_edges = String::new();
+    let mut svg_corridors = String::new();
+    let mut svg_icon_defs = String::new();
     let mut room_max_x = 0;
     let mut room_max_y = 0;
 
-    // Many resources across a subscription share the same icon key (e.g.
-    // every storage account); cache each key's short glyph the first time
-    // it's computed instead of re-deriving it per resource.
-    let mut glyph_cache: HashMap<&str, String> = HashMap::new();
+    // Each icon key's SVG shape only needs to be embedded once as a shared
+    // <symbol> definition; every resource instance then just references it
+    // via <use>, so a subscription with hundreds of storage accounts still
+    // ships one copy of the storage-account icon artwork.
+    let mut defined_icons: HashSet<&'static str> = HashSet::new();
 
     for room in &map.rooms {
         room_max_x = room_max_x.max(room.x);
@@ -39,30 +48,39 @@ pub fn render_html(map: &DungeonMap) -> String {
 
         let mut resource_icons = String::new();
         for (i, res) in room.resources.iter().enumerate() {
-            let ix = px + 10 + (i as i32 % 4) * 24;
-            let iy = py + 34 + (i as i32 / 4) * 24;
-            let icon_short = glyph_cache
-                .entry(res.icon.as_str())
-                .or_insert_with(|| short_icon_glyph(&res.icon));
+            let key = icon_assets::canonical_key(&res.icon);
+            if defined_icons.insert(key) {
+                svg_icon_defs.push_str(&format!(
+                    "<symbol id=\"icon-{key}\" viewBox=\"0 0 24 24\">{inner}</symbol>",
+                    key = key,
+                    inner = icon_assets::inner_markup(key),
+                ));
+            }
+
+            let ix = px + WALL + 8 + (i as i32 % 4) * (ICON_SIZE + 6);
+            let iy = py + WALL + 30 + (i as i32 / 4) * (ICON_SIZE + 6);
             resource_icons.push_str(&format!(
-                "<g class=\"resource\" data-resource-id=\"{id}\"><title>{name} ({kind})</title>\
-                 <rect x=\"{ix}\" y=\"{iy}\" width=\"20\" height=\"20\" rx=\"3\" class=\"icon icon-{icon}\"/>\
-                 <text x=\"{tx}\" y=\"{ty}\" class=\"icon-label\">{icon_short}</text></g>",
+                "<g class=\"resource\" data-resource-id=\"{id}\">\
+                 <title>{name} ({kind})</title>\
+                 <use href=\"#icon-{key}\" x=\"{ix}\" y=\"{iy}\" width=\"{size}\" height=\"{size}\" \
+                 class=\"icon icon-{key}\" data-icon=\"{key}\"/></g>",
                 id = escape_html(&scrub(&res.id)),
                 name = escape_html(&scrub(&res.name)),
                 kind = escape_html(&scrub(&res.kind)),
+                key = key,
                 ix = ix,
                 iy = iy,
-                tx = ix + 2,
-                ty = iy + 14,
-                icon = escape_html(&scrub(&res.icon)),
-                icon_short = escape_html(icon_short),
+                size = ICON_SIZE,
             ));
         }
 
+        // A "walled chamber": an outer wall stroke plus a slightly inset
+        // floor fill, evoking a hand-drawn dungeon room rather than a flat
+        // node-graph box.
         svg_rooms.push_str(&format!(
             "<g class=\"room\" data-room-id=\"{id}\">\
-             <rect x=\"{px}\" y=\"{py}\" width=\"{w}\" height=\"{h}\" rx=\"6\" class=\"room-wall\"/>\
+             <rect x=\"{px}\" y=\"{py}\" width=\"{w}\" height=\"{h}\" rx=\"3\" class=\"room-floor\"/>\
+             <rect x=\"{px}\" y=\"{py}\" width=\"{w}\" height=\"{h}\" rx=\"3\" class=\"room-wall\"/>\
              <text x=\"{tx}\" y=\"{ty}\" class=\"room-label\">{name}</text>\
              {icons}</g>",
             id = escape_html(&scrub(&room.id)),
@@ -79,10 +97,12 @@ pub fn render_html(map: &DungeonMap) -> String {
 
     for edge in &map.edges {
         if let (Some(a), Some(b)) = (map.room(&edge.from), map.room(&edge.to)) {
-            let (ax, ay) = (a.x * CELL + ROOM_SIZE / 2, a.y * CELL + ROOM_SIZE / 2);
-            let (bx, by) = (b.x * CELL + ROOM_SIZE / 2, b.y * CELL + ROOM_SIZE / 2);
-            svg_edges.push_str(&format!(
-                "<line x1=\"{ax}\" y1=\"{ay}\" x2=\"{bx}\" y2=\"{by}\" class=\"corridor\"/>"
+            svg_corridors.push_str(&corridor_path(
+                a.x * CELL,
+                a.y * CELL,
+                b.x * CELL,
+                b.y * CELL,
+                ROOM_SIZE,
             ));
         }
     }
@@ -103,16 +123,20 @@ pub fn render_html(map: &DungeonMap) -> String {
 <meta charset="utf-8">
 <title>AzZork Dungeon Crawler — {subscription}</title>
 <style>
-  body {{ background: #14110f; color: #e8dcc4; font-family: 'Courier New', monospace; margin: 0; padding: 16px; }}
-  h1 {{ font-size: 1.1em; }}
+  body {{ background: #2b2013; color: #3a2c18; font-family: 'Georgia', 'Courier New', serif; margin: 0; padding: 16px; }}
+  h1 {{ font-size: 1.1em; color: #e8dcc4; }}
   .partial-banner {{ background: #5a3a1a; color: #ffe9b3; padding: 8px; margin-bottom: 12px; border: 1px solid #a97; }}
-  svg {{ background: #1c1712; border: 2px solid #6b4f2a; }}
-  .room-wall {{ fill: #2a2116; stroke: #a97c3f; stroke-width: 3; }}
-  .room-label {{ fill: #e8dcc4; font-size: 12px; }}
-  .corridor {{ stroke: #6b4f2a; stroke-width: 4; stroke-dasharray: 2 3; }}
-  .icon {{ fill: #7fae4a; stroke: #33220f; }}
-  .icon-label {{ fill: #14110f; font-size: 8px; }}
-  #detail {{ margin-top: 12px; padding: 10px; border: 1px solid #6b4f2a; display: none; }}
+  svg {{ background: #e8dcbd; border: 3px solid #4a3418; }}
+  .parchment {{ fill: #e8dcbd; }}
+  .grid-line {{ stroke: #cbb98a; stroke-width: 1; }}
+  .room-floor {{ fill: #f2e8cc; }}
+  .room-wall {{ fill: none; stroke: #3a2c18; stroke-width: 5; }}
+  .room-label {{ fill: #3a2c18; font-size: 12px; font-weight: bold; }}
+  .corridor {{ fill: none; stroke: #3a2c18; stroke-width: 10; stroke-linecap: square; }}
+  .corridor-fill {{ fill: none; stroke: #d8c896; stroke-width: 6; stroke-linecap: square; }}
+  .door {{ fill: #6b4226; stroke: #2a1c10; stroke-width: 1; }}
+  .icon {{ color: #3a2c18; }}
+  #detail {{ margin-top: 12px; padding: 10px; border: 2px solid #4a3418; display: none; background: #1c1712; color: #e8dcc4; }}
   #detail a {{ color: #9fd3ff; }}
   #detail code {{ display: block; background: #0c0a08; padding: 4px; margin: 2px 0; }}
 </style>
@@ -121,7 +145,15 @@ pub fn render_html(map: &DungeonMap) -> String {
 <h1>Dungeon map — subscription {subscription}</h1>
 {partial_banner}
 <svg width="{width}" height="{height}">
-{edges}
+<defs>
+<pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+<path d="M 20 0 L 0 0 0 20" class="grid-line" fill="none"/>
+</pattern>
+{icon_defs}
+</defs>
+<rect x="0" y="0" width="{width}" height="{height}" class="parchment"/>
+<rect x="0" y="0" width="{width}" height="{height}" fill="url(#grid)"/>
+{corridors}
 {rooms}
 </svg>
 <div id="detail"></div>
@@ -133,7 +165,6 @@ pub fn render_html(map: &DungeonMap) -> String {
       evt.stopPropagation();
       var id = el.getAttribute('data-resource-id');
       fetch('/api/v1/resources/' + id).then(function(r) {{ return r.json(); }}).then(function(data) {{
-        var html = '<strong></strong><br>Type: <span></span><br>';
         detail.innerHTML = '';
         var h = document.createElement('strong');
         h.textContent = data.name;
@@ -165,20 +196,60 @@ pub fn render_html(map: &DungeonMap) -> String {
         partial_banner = partial_banner,
         width = width,
         height = height,
-        edges = svg_edges,
+        icon_defs = svg_icon_defs,
+        corridors = svg_corridors,
         rooms = svg_rooms,
     );
     scrub(&html)
 }
 
-/// A short (<=2 char) glyph shown inline on a resource's icon tile; purely
-/// cosmetic, derived from the icon key so it's stable and offline.
-fn short_icon_glyph(icon: &str) -> String {
-    icon.split('-')
-        .filter_map(|w| w.chars().next())
-        .take(2)
-        .collect::<String>()
-        .to_uppercase()
+/// Build an orthogonal (right-angle) corridor `<path>` between two rooms'
+/// walls, plus a `<door>` marker at each end where the corridor meets the
+/// room — the "L-shaped hallway with doors" look of a classic tabletop
+/// dungeon map, replacing a bare diagonal `<line>` between room centers.
+fn corridor_path(ax: i32, ay: i32, bx: i32, by: i32, room_size: i32) -> String {
+    let a_cx = ax + room_size / 2;
+    let a_cy = ay + room_size / 2;
+    let b_cx = bx + room_size / 2;
+    let b_cy = by + room_size / 2;
+
+    // Exit A's wall on the side facing B, and enter B's wall on the side
+    // facing A, then join the two points with one right-angle bend.
+    let (exit_x, exit_y) = if b_cx >= a_cx {
+        (ax + room_size, a_cy)
+    } else {
+        (ax, a_cy)
+    };
+    let (entry_x, entry_y) = if a_cx >= b_cx {
+        (bx + room_size, b_cy)
+    } else {
+        (bx, b_cy)
+    };
+    let mid_x = (exit_x + entry_x) / 2;
+
+    let path = format!(
+        "<path class=\"corridor\" d=\"M {ex} {ey} L {mx} {ey} L {mx} {fy} L {fx} {fy}\"/>\
+         <path class=\"corridor-fill\" d=\"M {ex} {ey} L {mx} {ey} L {mx} {fy} L {fx} {fy}\"/>",
+        ex = exit_x,
+        ey = exit_y,
+        mx = mid_x,
+        fy = entry_y,
+        fx = entry_x,
+    );
+
+    // Door glyphs: small filled rects straddling each wall opening.
+    let door_a = format!(
+        "<rect x=\"{x}\" y=\"{y}\" width=\"6\" height=\"12\" class=\"door\"/>",
+        x = exit_x - 3,
+        y = exit_y - 6
+    );
+    let door_b = format!(
+        "<rect x=\"{x}\" y=\"{y}\" width=\"6\" height=\"12\" class=\"door\"/>",
+        x = entry_x - 3,
+        y = entry_y - 6
+    );
+
+    format!("{path}{door_a}{door_b}")
 }
 
 /// Escape a string for safe inclusion in HTML/SVG text content or
