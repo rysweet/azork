@@ -424,6 +424,7 @@ Full documentation lives in [`docs/`](docs/):
 - [Dungeon Crawler Mode](docs/DUNGEON-CRAWLER.md) — the map view: `azork crawl`, icons, the local server, and interactive room pop-ups.
 - [Security policy](SECURITY.md) — threat model, guarantees, and how to report vulnerabilities.
 - [Security audit](docs/SECURITY-AUDIT.md) — findings, fixes, and verification results.
+- [Carl OIT campaign](docs/CARL-OIT-CAMPAIGN.md) — the outside-in, black-box product-testing process run against the built binary.
 
 ## License
 
