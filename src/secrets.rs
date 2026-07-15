@@ -357,6 +357,28 @@ mod tests {
     }
 
     #[test]
+    fn does_not_panic_on_multibyte_unicode_near_secret_shapes() {
+        // Regression guard for the manual byte-offset slicing in
+        // `redact_jwt_like`/`redact_bearer_tokens`/`find_ignore_case`: a
+        // multi-byte UTF-8 character immediately adjacent to (or interleaved
+        // with) an `eyJ`/`bearer`/`key=` shape must never trigger an
+        // out-of-bounds or non-char-boundary slice panic.
+        let hostile =
+            "eyJ日本語.漢字.ütf8 bearer→ 東京token:🔑 accountkey=测试データ\u{200b}\nsig=𝓼𝓲𝓰";
+        let _ = scrub(hostile);
+
+        // A string that is *only* multi-byte characters, with no ASCII at
+        // all, must also survive untouched (no secret shapes to redact).
+        let only_unicode = "日本語のテスト文字列です。安全な文字列。";
+        assert_eq!(scrub(only_unicode), only_unicode);
+
+        // "eyJ" immediately followed by a multi-byte character (not a valid
+        // base64url continuation) must not panic while scanning forward.
+        let jwt_then_unicode = "eyJ日.eyJ本.eyJ語";
+        let _ = scrub(jwt_then_unicode);
+    }
+
+    #[test]
     fn handles_empty_and_multiline_input() {
         assert_eq!(scrub(""), "");
         let multi = "line one\npassword=secretvalue\nline three";
