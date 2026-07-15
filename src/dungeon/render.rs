@@ -12,9 +12,9 @@
 //! self-designed rather than driving a third-party map tool.
 
 use crate::dungeon::icon_assets;
-use crate::dungeon::map::DungeonMap;
+use crate::dungeon::map::{DungeonMap, Room};
 use crate::secrets::scrub;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Render `map` to a self-contained HTML document.
 ///
@@ -28,8 +28,11 @@ pub fn render_html(map: &DungeonMap) -> String {
     const WALL: i32 = 4;
     const ICON_SIZE: i32 = 20;
 
-    let mut svg_rooms = String::new();
-    let mut svg_corridors = String::new();
+    // Rough per-room/per-edge output size estimates so the accumulator
+    // strings grow once up front instead of reallocating/copying on every
+    // push for subscriptions with hundreds of rooms or corridors.
+    let mut svg_rooms = String::with_capacity(map.rooms.len() * 256);
+    let mut svg_corridors = String::with_capacity(map.edges.len() * 256);
     let mut svg_icon_defs = String::new();
     let mut room_max_x = 0;
     let mut room_max_y = 0;
@@ -39,6 +42,14 @@ pub fn render_html(map: &DungeonMap) -> String {
     // via <use>, so a subscription with hundreds of storage accounts still
     // ships one copy of the storage-account icon artwork.
     let mut defined_icons: HashSet<&'static str> = HashSet::new();
+
+    // Index rooms by id once so corridor lookups below are O(1) each
+    // instead of an O(rooms) linear scan per edge (map.room() does a linear
+    // find, which would make this loop O(edges * rooms) for large maps).
+    let mut rooms_by_id: HashMap<&str, &Room> = HashMap::with_capacity(map.rooms.len());
+    for room in &map.rooms {
+        rooms_by_id.insert(room.id.as_str(), room);
+    }
 
     for room in &map.rooms {
         room_max_x = room_max_x.max(room.x);
@@ -96,7 +107,10 @@ pub fn render_html(map: &DungeonMap) -> String {
     }
 
     for edge in &map.edges {
-        if let (Some(a), Some(b)) = (map.room(&edge.from), map.room(&edge.to)) {
+        if let (Some(a), Some(b)) = (
+            rooms_by_id.get(edge.from.as_str()),
+            rooms_by_id.get(edge.to.as_str()),
+        ) {
             svg_corridors.push_str(&corridor_path(
                 a.x * CELL,
                 a.y * CELL,
@@ -255,6 +269,12 @@ fn corridor_path(ax: i32, ay: i32, bx: i32, by: i32, room_size: i32) -> String {
 /// Escape a string for safe inclusion in HTML/SVG text content or
 /// double-quoted attribute values.
 pub fn escape_html(s: &str) -> String {
+    // The overwhelming majority of resource/room names contain no
+    // characters that need escaping; skip the char-by-char rebuild (and its
+    // allocation) entirely in that common case.
+    if !s.contains(['&', '<', '>', '"', '\'']) {
+        return s.to_string();
+    }
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
