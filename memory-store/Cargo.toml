@@ -1,6 +1,6 @@
 [package]
 name = "azork-memory-store"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Optional companion crate: durable graph memory for AzZork backed by amplihack-memory."
 license = "MIT"
