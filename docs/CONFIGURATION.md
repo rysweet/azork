@@ -127,14 +127,50 @@ primarily a mock-world feature.
 | Variable | Values | Default | Effect |
 | --- | --- | --- | --- |
 | `AZORK_BACKEND` | `mock`, `az`, `real`, `azure` | `mock` | Selects the backend when no `--backend` flag is given. |
+| `AZORK_CACHE_DIR` | any writable directory | see below | Directory for the learned-capability cache (`capabilities.tsv`) and graph memory (`memory.graph`). |
+| `AZORK_MAX_ROOMS` | positive integer | `40` | (`az` backend) max resource groups mapped into rooms, so large tenants stay responsive. |
+| `AZORK_MAX_RESOURCE_ROOMS` | positive integer | `8` | (`az` backend) max rooms whose resources are enumerated via `az resource list`. |
+| `AZORK_NO_UPDATE_CHECK` | any non-empty value | unset | Disables the cheap, cached self-update check performed at startup. See the [Self-Update guide](UPDATING.md). |
+| `AZORK_BIN` | path to the `azork` executable | see below | Used by the `az azork` CLI extension (and other launchers) to locate the compiled binary. |
+| `AZORK_OIT_SUBSCRIPTION` | Azure subscription id | maintainer's test subscription | (`azork-oit` only) overrides the subscription id the OIT agent's preflight check requires before running live. |
+| `AZORK_OIT_TENANT` | tenant display name | maintainer's test tenant | (`azork-oit` only) overrides the tenant name recorded/expected by the OIT agent; informational, not enforced by preflight. |
+| `AZORK_OIT_ISSUES` | comma-separated list | unset | (`azork-oit` only) issue references (e.g. `#42,#57`) to cite in the generated friction report. |
+
+### `azork-oit` (Outside-In-Testing agent) environment variables
+
+The `azork-oit` binary (see [Usage: OIT agent](USAGE.md#outside-in-testing-oit-agent))
+drives AzZork against a **live** subscription. It refuses to run against any
+subscription other than the one it expects, as a safety guardrail:
+
+- `AZORK_OIT_SUBSCRIPTION` — the subscription id `az account show` must match
+  during preflight. Defaults to the maintainer's non-secret test subscription.
+  Set this to authorise the agent against your own tenant.
+- `AZORK_OIT_TENANT` — the expected tenant display name, recorded in the
+  friction report. Defaults to the maintainer's test tenant name.
+- `AZORK_OIT_ISSUES` — a comma-separated list of issue references (e.g.
+  `#12,#34`) folded into the `## Issues` section of the generated
+  `docs/oit-friction-report.md`, so friction findings can be traced back to
+  tracked work.
+
+None of these variables affect the default `azork` game binary — they are read
+only by `azork-oit`.
 
 ## Persistence
 
-None. AzZork has:
+AzZork keeps **no** configuration file, no world save/restore, and no
+serialization of the *game state* — every session starts fresh from the selected
+backend, and world changes are lost on exit. This keeps the destructive verbs
+safe.
 
-- no configuration file,
-- no save/restore,
-- no serialization to disk.
+The one thing that *does* persist is AzZork's **learned vocabulary**. Running
+`learn <group>` introspects `az <group> --help` and writes the discovered
+capabilities to a small tab-separated cache file, which is recalled on the next
+launch so the game accumulates knowledge over time. The cache location is:
 
-Every session starts fresh from the selected backend, and all changes are lost
-on exit. This keeps the destructive verbs safe and the tool dependency-free.
+1. `$AZORK_CACHE_DIR/capabilities.tsv` if `AZORK_CACHE_DIR` is set;
+2. else `$XDG_DATA_HOME/azork/capabilities.tsv`;
+3. else `~/.local/share/azork/capabilities.tsv`.
+
+The cache holds only public `az` command names and their one-line help summaries
+— no credentials, subscription data, or resource contents. Delete the file to
+reset AzZork's learned capabilities.

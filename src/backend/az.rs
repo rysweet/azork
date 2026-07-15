@@ -8,39 +8,72 @@
 //! (`-o tsv`) with narrow `--query` projections and parse the plain text.
 
 use super::Backend;
+use crate::az_runner::{AzRunner, ProcessAzRunner};
 use crate::parser::Direction;
 use crate::world::{Resource, Room, World};
 use std::io::ErrorKind;
-use std::process::{Command, Stdio};
 use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Maximum number of attempts (1 initial + retries) for a single `az` call.
 const MAX_ATTEMPTS: u32 = 3;
 /// Base delay for exponential backoff between retries.
 const BASE_BACKOFF: Duration = Duration::from_millis(400);
-/// Hard wall-clock timeout for a single `az` invocation. `az` can otherwise
-/// block indefinitely (e.g. an interactive device-code/browser login prompt,
-/// or a hung network call), which would freeze the whole game with no way
-/// out for the player.
-const AZ_CALL_TIMEOUT: Duration = Duration::from_secs(30);
-/// How often to poll a running `az` child process for completion.
-const AZ_POLL_INTERVAL: Duration = Duration::from_millis(50);
-/// Upper bound on how long to wait for the stdout/stderr reader threads to
-/// finish once the child has exited (or been killed on timeout). This is a
-/// safety net, not the expected path: if `az` spawned a grandchild that
-/// inherited the piped file descriptors and is still holding them open,
-/// `read_to_end` would otherwise block forever. Bounding it here guarantees
-/// `run_once` always returns within a predictable wall-clock budget, at the
-/// cost of leaking the (now-orphaned) reader thread in that rare case.
-const AZ_READER_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Backend that queries the real Azure control plane via `az`.
-pub struct AzBackend;
+///
+/// All CLI invocation goes through an injected [`AzRunner`], so tests can drive
+/// this backend with canned output instead of the real `az` binary.
+///
+/// On real subscriptions the resource-group count can be in the hundreds, and a
+/// naive "list every group, then list every group's resources" walk issues
+/// *O(groups)* sequential `az` calls — minutes of latency. To stay responsive
+/// the backend is **bounded**: it builds at most [`AzBackend::max_rooms`] rooms
+/// and only eagerly enumerates resources for the first
+/// [`AzBackend::max_resource_rooms`] of them. Both bounds are configurable via
+/// the `AZORK_MAX_ROOMS` / `AZORK_MAX_RESOURCE_ROOMS` environment variables.
+pub struct AzBackend {
+    runner: Box<dyn AzRunner>,
+    /// Maximum number of resource groups mapped into rooms.
+    max_rooms: usize,
+    /// Maximum number of rooms whose resources are enumerated during build.
+    max_resource_rooms: usize,
+}
+
+/// Default cap on rooms built from a live subscription.
+const DEFAULT_MAX_ROOMS: usize = 40;
+/// Default cap on rooms whose resources are eagerly enumerated.
+const DEFAULT_MAX_RESOURCE_ROOMS: usize = 8;
 
 impl AzBackend {
+    /// Construct a backend that shells out to the real `az` CLI, taking room
+    /// bounds from the environment (falling back to sane defaults).
     pub fn new() -> AzBackend {
-        AzBackend
+        AzBackend::with_runner(Box::new(ProcessAzRunner::new()))
+    }
+
+    /// Construct a backend over an arbitrary [`AzRunner`] (used by tests), with
+    /// bounds read from the environment.
+    pub fn with_runner(runner: Box<dyn AzRunner>) -> AzBackend {
+        AzBackend {
+            runner,
+            max_rooms: env_cap("AZORK_MAX_ROOMS", DEFAULT_MAX_ROOMS),
+            max_resource_rooms: env_cap("AZORK_MAX_RESOURCE_ROOMS", DEFAULT_MAX_RESOURCE_ROOMS),
+        }
+    }
+
+    /// Construct a backend with explicit bounds (used by tests to assert the
+    /// caps without touching process-global environment variables).
+    pub fn with_runner_and_caps(
+        runner: Box<dyn AzRunner>,
+        max_rooms: usize,
+        max_resource_rooms: usize,
+    ) -> AzBackend {
+        AzBackend {
+            runner,
+            max_rooms: max_rooms.max(1),
+            max_resource_rooms,
+        }
     }
 
     /// Run an `az` invocation with bounded retries and exponential backoff.
@@ -68,108 +101,31 @@ impl AzBackend {
     }
 
     /// Perform a single `az` invocation. Returns `(message, retryable)` on error.
+    ///
+    /// Delegates the actual process launch to `self.runner`, which (via
+    /// [`crate::az_runner::ProcessAzRunner`] in production) applies a hard
+    /// wall-clock timeout, zombie-process cleanup, and pipe-deadlock
+    /// protection — see that module for the details. Tests inject a
+    /// `FakeAzRunner` so no real `az` binary or hardening path is exercised.
     fn run_once(&self, args: &[&str]) -> Result<String, (String, bool)> {
-        use std::io::Read;
-        use std::sync::mpsc;
-
-        let mut child = Command::new("az")
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                // A missing binary is never transient; other spawn errors might be.
-                let retryable = e.kind() != ErrorKind::NotFound;
-                (
-                    format!("failed to launch 'az' (is it installed & on PATH?): {}", e),
-                    retryable,
-                )
-            })?;
-
-        // Drain stdout/stderr concurrently on background threads, handing
-        // each buffer back over a channel rather than joining the thread
-        // directly — that lets the caller bound how long it waits below
-        // (AZ_READER_JOIN_TIMEOUT) instead of risking an indefinite join if
-        // a grandchild process keeps the pipe open. OS pipe buffers are only
-        // ~64KB; `az resource list` on a busy subscription can easily exceed
-        // that, and without draining while we wait, the child would block
-        // inside its own write() the moment the buffer fills — `try_wait()`
-        // would then never observe an exit, and a slow-but-successful
-        // command would be misreported as a timeout.
-        let mut stdout_pipe = child.stdout.take().expect("stdout was piped");
-        let mut stderr_pipe = child.stderr.take().expect("stderr was piped");
-        let (stdout_tx, stdout_rx) = mpsc::channel();
-        let (stderr_tx, stderr_rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = stdout_pipe.read_to_end(&mut buf);
-            let _ = stdout_tx.send(buf);
-        });
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = stderr_pipe.read_to_end(&mut buf);
-            let _ = stderr_tx.send(buf);
-        });
-
-        // Single cleanup path for every exit from the poll loop (normal
-        // completion, timeout, or a try_wait() error): always attempt to
-        // kill+reap the child so no zombie process or leaked reader thread
-        // survives a failed/timed-out attempt, especially since these
-        // outcomes are retried by `run()`.
-        let deadline = Instant::now() + AZ_CALL_TIMEOUT;
-        let (status, timed_out) = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break (Some(status), false),
-                Ok(None) => {
-                    if Instant::now() >= deadline {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        break (None, true);
-                    }
-                    sleep(AZ_POLL_INTERVAL);
-                }
-                Err(_e) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    break (None, false);
-                }
+        let output = self.runner.run(args).map_err(|e| {
+            // A timeout is always worth retrying; a missing binary never is;
+            // other spawn errors might be.
+            if e.kind() == ErrorKind::TimedOut {
+                return (e.to_string(), true);
             }
-        };
-
-        let stdout = stdout_rx
-            .recv_timeout(AZ_READER_JOIN_TIMEOUT)
-            .unwrap_or_default();
-        let stderr = stderr_rx
-            .recv_timeout(AZ_READER_JOIN_TIMEOUT)
-            .unwrap_or_default();
-
-        if timed_out {
-            return Err((
-                format!(
-                    "'az {}' timed out after {}s (killed)",
-                    args.join(" "),
-                    AZ_CALL_TIMEOUT.as_secs()
-                ),
-                true,
-            ));
-        }
-        let status = match status {
-            Some(status) => status,
-            None => {
-                return Err((
-                    "failed to wait on 'az' process: process could not be reaped".to_string(),
-                    true,
-                ));
-            }
-        };
-
-        if !status.success() {
-            let stderr = String::from_utf8_lossy(&stderr);
+            let retryable = e.kind() != ErrorKind::NotFound;
+            (
+                format!("failed to launch 'az' (is it installed & on PATH?): {}", e),
+                retryable,
+            )
+        })?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
             let msg = format!("'az {}' failed: {}", args.join(" "), stderr.trim());
             return Err((msg, is_transient(&stderr)));
         }
-        Ok(String::from_utf8_lossy(&stdout).into_owned())
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }
 
@@ -256,6 +212,16 @@ impl Default for AzBackend {
     }
 }
 
+/// Read a positive `usize` cap from an environment variable, falling back to
+/// `default` when unset, empty, unparseable, or zero.
+fn env_cap(var: &str, default: usize) -> usize {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(default)
+}
+
 impl Backend for AzBackend {
     fn name(&self) -> &str {
         "az (live Azure)"
@@ -283,7 +249,7 @@ impl Backend for AzBackend {
             "-o",
             "tsv",
         ])?;
-        let groups = parse_group_tsv(&groups_raw);
+        let mut groups = parse_group_tsv(&groups_raw);
 
         if groups.is_empty() {
             return Err(
@@ -293,13 +259,28 @@ impl Backend for AzBackend {
             );
         }
 
+        // Bound the walk: on large subscriptions (hundreds of groups) mapping
+        // every group — and listing every group's resources — is minutes of
+        // sequential `az` calls. Cap the number of rooms so the game is
+        // responsive; note the truncation so the player knows more exists.
+        let total_groups = groups.len();
+        let truncated = total_groups > self.max_rooms;
+        groups.truncate(self.max_rooms);
+
         // Build rooms, chaining them north<->south so the estate is navigable.
         let mut rooms: Vec<Room> = Vec::new();
         for (i, (gname, location)) in groups.iter().enumerate() {
+            let desc = if truncated && i == 0 {
+                format!(
+                    "Resource group '{}' in {}. (Showing {} of {} resource groups; \
+                     set AZORK_MAX_ROOMS to see more.)",
+                    gname, location, self.max_rooms, total_groups
+                )
+            } else {
+                format!("Resource group '{}' in {}.", gname, location)
+            };
             let mut room = Room::new(
-                gname,
-                &format!("Resource group '{}' in {}.", gname, location),
-                location,
+                gname, &desc, location,
                 true, // assume monitored; we can't cheaply prove otherwise
             );
             if i > 0 {
@@ -309,23 +290,28 @@ impl Backend for AzBackend {
                 room = room.with_exit(Direction::North, &groups[i + 1].0);
             }
 
-            // Resources in this group become objects.
-            if let Ok(res_raw) = self.run(&[
-                "resource",
-                "list",
-                "-g",
-                gname,
-                "--query",
-                "[].{name:name,type:type}",
-                "-o",
-                "tsv",
-            ]) {
-                for (rname, rtype) in parse_resource_tsv(&res_raw) {
-                    room = room.with_resource(Resource::new(
-                        &rname,
-                        &rtype,
-                        &format!("A live {} named {}.", rtype, rname),
-                    ));
+            // Resources are enumerated only for the first `max_resource_rooms`
+            // rooms — one `az resource list` per room is the dominant cost, so we
+            // bound it. Rooms beyond the cap are still navigable; their contents
+            // are simply not pre-listed.
+            if i < self.max_resource_rooms {
+                if let Ok(res_raw) = self.run(&[
+                    "resource",
+                    "list",
+                    "-g",
+                    gname,
+                    "--query",
+                    "[].{name:name,type:type}",
+                    "-o",
+                    "tsv",
+                ]) {
+                    for (rname, rtype) in parse_resource_tsv(&res_raw) {
+                        room = room.with_resource(Resource::new(
+                            &rname,
+                            &rtype,
+                            &format!("A live {} named {}.", rtype, rname),
+                        ));
+                    }
                 }
             }
 
@@ -339,7 +325,9 @@ impl Backend for AzBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_transient, parse_group_tsv, parse_resource_tsv};
+    use super::{is_transient, parse_group_tsv, parse_resource_tsv, AzBackend};
+    use crate::az_runner::FakeAzRunner;
+    use crate::backend::Backend;
 
     #[test]
     fn parse_group_tsv_parses_name_and_location() {
@@ -402,5 +390,50 @@ mod tests {
         ));
         assert!(!is_transient("Forbidden"));
         assert!(!is_transient(""));
+    }
+
+    /// A live subscription with more groups than the room cap must not build a
+    /// room per group, and must only enumerate resources up to the resource cap.
+    #[test]
+    fn build_world_bounds_rooms_and_resource_calls() {
+        // Five groups; caps of 3 rooms and 1 resource-enumerated room.
+        let groups_tsv = "rg0\teastus\nrg1\teastus\nrg2\teastus\nrg3\teastus\nrg4\teastus";
+        let runner = FakeAzRunner::new()
+            .with(&["account", "show", "--query", "name", "-o", "tsv"], "sub")
+            .with(
+                &[
+                    "group",
+                    "list",
+                    "--query",
+                    "[].{name:name,location:location}",
+                    "-o",
+                    "tsv",
+                ],
+                groups_tsv,
+            )
+            // Only rg0's resources should ever be requested (resource cap = 1).
+            .with(
+                &[
+                    "resource",
+                    "list",
+                    "-g",
+                    "rg0",
+                    "--query",
+                    "[].{name:name,type:type}",
+                    "-o",
+                    "tsv",
+                ],
+                "store0\tMicrosoft.Storage/storageAccounts",
+            );
+
+        let backend = AzBackend::with_runner_and_caps(Box::new(runner), 3, 1);
+        let world = backend.build_world().expect("world builds within caps");
+
+        // Room cap honoured: 3 rooms, not 5.
+        assert_eq!(world.rooms_len(), 3);
+        // The starting room's truncation note mentions the total.
+        assert!(world.look().contains("of 5 resource groups"));
+        // rg0 has its resource; rg1/rg2 were never resource-listed (would have
+        // failed as unregistered fake calls if the cap were not honoured).
     }
 }

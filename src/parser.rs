@@ -73,8 +73,20 @@ pub enum Command {
     Score,
     /// Cast a "spell": currently `deploy` (bicep/ARM deployment).
     Cast(String),
+    /// Teach AzZork a new az command group by introspecting `az <group> --help`.
+    Learn(String),
+    /// List the az capabilities AzZork has learned so far.
+    Capabilities,
+    /// Record a friction note into persistent memory (something to improve).
+    Friction(String),
+    /// Ranked recall over persistent memory for a free-text query.
+    Recall(String),
+    /// Summarise what AzZork remembers (counts by kind + recent notes).
+    Memory,
     /// Show help.
     Help,
+    /// Print the AzZork version banner.
+    Version,
     /// Leave the game.
     Quit,
     /// Player entered nothing.
@@ -168,7 +180,31 @@ pub fn parse(input: &str) -> Command {
         }
         // Allow "deploy ..." as a convenience alias for "cast deploy".
         "deploy" => Command::Cast(format!("deploy {}", arg).trim().to_string()),
+        "learn" | "discover" | "study" => {
+            if arg.is_empty() {
+                Command::Unknown(input.to_string())
+            } else {
+                Command::Learn(arg)
+            }
+        }
+        "capabilities" | "caps" | "powers" | "spells" => Command::Capabilities,
+        "friction" | "note" | "gripe" => {
+            if arg.is_empty() {
+                Command::Unknown(input.to_string())
+            } else {
+                Command::Friction(arg)
+            }
+        }
+        "recall" | "remember" => {
+            if arg.is_empty() {
+                Command::Unknown(input.to_string())
+            } else {
+                Command::Recall(arg)
+            }
+        }
+        "memory" | "mem" | "recollect" => Command::Memory,
         "help" | "?" | "h" => Command::Help,
+        "version" | "ver" => Command::Version,
         "quit" | "q" | "exit" => Command::Quit,
         _ => Command::Unknown(input.to_string()),
     }
@@ -299,8 +335,44 @@ mod tests {
     }
 
     #[test]
+    fn learn_and_capabilities() {
+        assert_eq!(
+            parse("learn storage"),
+            Command::Learn("storage".to_string())
+        );
+        assert_eq!(
+            parse("discover the network"),
+            Command::Learn("network".to_string())
+        );
+        assert!(matches!(parse("learn"), Command::Unknown(_)));
+        assert_eq!(parse("capabilities"), Command::Capabilities);
+        assert_eq!(parse("caps"), Command::Capabilities);
+        assert_eq!(parse("powers"), Command::Capabilities);
+    }
+
+    #[test]
     fn unknown_verb() {
         assert!(matches!(parse("frobnicate the vm"), Command::Unknown(_)));
+    }
+
+    #[test]
+    fn memory_commands() {
+        assert_eq!(
+            parse("friction help is confusing"),
+            Command::Friction("help is confusing".to_string())
+        );
+        assert_eq!(
+            parse("note the errors are cryptic"),
+            Command::Friction("errors are cryptic".to_string())
+        );
+        assert_eq!(
+            parse("recall storage"),
+            Command::Recall("storage".to_string())
+        );
+        assert_eq!(parse("memory"), Command::Memory);
+        assert_eq!(parse("mem"), Command::Memory);
+        assert!(matches!(parse("friction"), Command::Unknown(_)));
+        assert!(matches!(parse("recall"), Command::Unknown(_)));
     }
 
     #[test]
