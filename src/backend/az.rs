@@ -440,10 +440,14 @@ mod tests {
         // Exercise the real error-formatting function used by `run_once` on
         // failure, proving the integration point without depending on a
         // real `az` binary being installed.
-        let hostile_stderr = "ERROR: token: abc123SECRETXYZ AccountKey=SGVsbG8gV29ybGQh==";
-        let msg = format_az_error(&["account", "show"], hostile_stderr);
-        assert!(!msg.contains("abc123SECRETXYZ"));
-        assert!(!msg.contains("SGVsbG8gV29ybGQh"));
+        let hostile_stderr = format!(
+            "ERROR: token: {} {}",
+            crate::secrets::test_fixtures::HOSTILE_TOKEN,
+            crate::secrets::test_fixtures::HOSTILE_ACCOUNT_KEY_FRAGMENT
+        );
+        let msg = format_az_error(&["account", "show"], &hostile_stderr);
+        assert!(!msg.contains(crate::secrets::test_fixtures::HOSTILE_TOKEN));
+        assert!(!msg.contains(crate::secrets::test_fixtures::HOSTILE_ACCOUNT_KEY_VALUE));
         assert!(msg.starts_with("'az account show' failed:"));
     }
 
@@ -466,9 +470,12 @@ mod tests {
         let plain_tsv = "my-resource-group\teastus\nanother-rg\twestus2";
         assert_eq!(scrub(plain_tsv), plain_tsv);
 
-        let hostile_stdout = "my-rg\teastus\nAccountKey=SGVsbG8gV29ybGQh==\tfakeus";
-        let scrubbed = scrub(hostile_stdout);
-        assert!(!scrubbed.contains("SGVsbG8gV29ybGQh"));
+        let hostile_stdout = format!(
+            "my-rg\teastus\n{}\tfakeus",
+            crate::secrets::test_fixtures::HOSTILE_ACCOUNT_KEY_FRAGMENT
+        );
+        let scrubbed = scrub(&hostile_stdout);
+        assert!(!scrubbed.contains(crate::secrets::test_fixtures::HOSTILE_ACCOUNT_KEY_VALUE));
         assert!(scrubbed.contains("my-rg"));
     }
 

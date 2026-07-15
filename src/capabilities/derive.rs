@@ -22,6 +22,7 @@
 
 use super::Capability;
 use crate::az_runner::AzRunner;
+use crate::secrets::scrub;
 
 /// One entry parsed out of a help section: a name, its optional lifecycle tag,
 /// and its (possibly reflowed) summary.
@@ -66,15 +67,25 @@ pub fn derive_group_capabilities(
 }
 
 /// Run `az <args>` and return trimmed stdout, or a friendly error string.
+///
+/// `az` help text is not expected to contain secrets, but this is the same
+/// seam ([`AzRunner::run`]) used by the live backend, and `az` extensions or
+/// future help text could in principle echo environment-influenced content.
+/// Both the success and failure paths are scrubbed defensively, matching the
+/// symmetric treatment applied in [`crate::backend::az`].
 fn run_help(runner: &dyn AzRunner, args: &[&str]) -> Result<String, String> {
     let out = runner
         .run(args)
         .map_err(|e| format!("failed to run 'az {}': {}", args.join(" "), e))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("'az {}' failed: {}", args.join(" "), stderr.trim()));
+        return Err(format!(
+            "'az {}' failed: {}",
+            args.join(" "),
+            scrub(stderr.trim())
+        ));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok(scrub(&String::from_utf8_lossy(&out.stdout)))
 }
 
 /// Parse a named section (`Subgroups:` / `Commands:`) out of help text.

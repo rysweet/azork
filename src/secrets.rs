@@ -267,6 +267,28 @@ fn redact_jwt_like(line: &str) -> String {
     out
 }
 
+/// Secret-*shaped* (but entirely synthetic) literals shared by regression
+/// tests across the crate.
+///
+/// GitGuardian's static scanner flags any literal matching a known secret
+/// shape, which is exactly the property these fixtures need for the tests
+/// that exercise [`scrub`]'s integration points (e.g. `az` error/success
+/// formatting in [`crate::backend::az`] and [`crate::capabilities::derive`]).
+/// Per `.gitguardian.yaml`, `src/secrets.rs` is the *only* path exempted from
+/// scanning, so every such literal must live here — callers reference these
+/// constants instead of embedding the shapes themselves.
+#[cfg(test)]
+pub(crate) mod test_fixtures {
+    /// A fake opaque token, shaped like a client secret/PAT.
+    pub const HOSTILE_TOKEN: &str = "abc123SECRETXYZ";
+    /// A fake Azure Storage `AccountKey=` connection-string fragment.
+    pub const HOSTILE_ACCOUNT_KEY_FRAGMENT: &str = "AccountKey=SGVsbG8gV29ybGQh==";
+    /// Just the fake key *value* half of [`HOSTILE_ACCOUNT_KEY_FRAGMENT`], for
+    /// tests that need to assert the value (not the `AccountKey=` prefix,
+    /// which survives redaction as the key name) is absent post-scrub.
+    pub const HOSTILE_ACCOUNT_KEY_VALUE: &str = "SGVsbG8gV29ybGQh==";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
