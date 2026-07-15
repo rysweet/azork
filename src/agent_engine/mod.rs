@@ -175,4 +175,82 @@ mod tests {
             .expect("embedded recipe engine should run offline by default");
         assert!(res.success);
     }
+
+    #[test]
+    fn adapter_agent_step_handles_unrecognized_intent() {
+        // Edge case: an intent that matches nothing in the registry should still
+        // resolve to a non-empty narration (the offline resolver's fallback),
+        // never an error or an empty string.
+        let a = AzorkAdapter::new(registry());
+        let out = a
+            .execute_agent_step(
+                "summon a dragon from the void",
+                None,
+                None,
+                None,
+                ".",
+                None,
+                None,
+            )
+            .expect("agent step should not error on unknown intent");
+        assert!(!out.is_empty());
+    }
+
+    #[test]
+    fn adapter_agent_step_resolves_with_empty_registry() {
+        // Edge case: an empty capability registry (nothing learned yet) must not
+        // panic or error; the resolver should still produce a narration.
+        let a = AzorkAdapter::new(CapabilityRegistry::new());
+        let out = a
+            .execute_agent_step(
+                "create a storage account",
+                None,
+                None,
+                None,
+                ".",
+                None,
+                None,
+            )
+            .expect("agent step should not error with an empty registry");
+        assert!(!out.is_empty());
+    }
+
+    #[test]
+    fn run_intent_recipe_rejects_malformed_yaml() {
+        // Error handling: malformed recipe YAML must surface as an Err, not
+        // panic, and the error message should be non-empty for diagnosis.
+        let bad_yaml = "not: [valid, recipe, structure: :::";
+        let err = run_intent_recipe(bad_yaml, registry(), true)
+            .expect_err("malformed YAML should fail to parse");
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn run_intent_recipe_rejects_missing_required_fields() {
+        // Error handling: a syntactically valid YAML document that is missing
+        // required recipe fields (e.g. `steps`) should fail cleanly rather than
+        // silently no-op.
+        let incomplete_yaml = r#"
+name: incomplete-recipe
+description: missing the steps list entirely
+"#;
+        assert!(run_intent_recipe(incomplete_yaml, registry(), true).is_err());
+    }
+
+    #[test]
+    fn bash_step_delegates_to_cli_subprocess_adapter() {
+        // Integration: bash steps must actually execute via the runner's
+        // CLISubprocessAdapter, not be swallowed by the agent-step resolver.
+        // Uses a portable no-op command so the test stays hermetic and fast.
+        let a = AzorkAdapter::new(registry());
+        let out = a
+            .execute_bash_step(
+                "echo azork-agent-engine-bash-step",
+                ".",
+                Some(5),
+                &HashMap::new(),
+            )
+            .expect("bash step should execute successfully");
+        assert!(out.contains("azork-agent-engine-bash-step"));
+    }
 }
