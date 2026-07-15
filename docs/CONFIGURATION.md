@@ -130,6 +130,30 @@ primarily a mock-world feature.
 | `AZORK_CACHE_DIR` | any writable directory | see below | Directory for the learned-capability cache (`capabilities.tsv`) and graph memory (`memory.graph`). |
 | `AZORK_MAX_ROOMS` | positive integer | `40` | (`az` backend) max resource groups mapped into rooms, so large tenants stay responsive. |
 | `AZORK_MAX_RESOURCE_ROOMS` | positive integer | `8` | (`az` backend) max rooms whose resources are enumerated via `az resource list`. |
+| `AZORK_NO_UPDATE_CHECK` | any non-empty value | unset | Disables the cheap, cached self-update check performed at startup. See the [Self-Update guide](UPDATING.md). |
+| `AZORK_BIN` | path to the `azork` executable | see below | Used by the `az azork` CLI extension (and other launchers) to locate the compiled binary. |
+| `AZORK_OIT_SUBSCRIPTION` | Azure subscription id | maintainer's test subscription | (`azork-oit` only) overrides the subscription id the OIT agent's preflight check requires before running live. |
+| `AZORK_OIT_TENANT` | tenant display name | maintainer's test tenant | (`azork-oit` only) overrides the tenant name recorded/expected by the OIT agent; informational, not enforced by preflight. |
+| `AZORK_OIT_ISSUES` | comma-separated list | unset | (`azork-oit` only) issue references (e.g. `#42,#57`) to cite in the generated friction report. |
+
+### `azork-oit` (Outside-In-Testing agent) environment variables
+
+The `azork-oit` binary (see [Usage: OIT agent](USAGE.md#outside-in-testing-oit-agent))
+drives AzZork against a **live** subscription. It refuses to run against any
+subscription other than the one it expects, as a safety guardrail:
+
+- `AZORK_OIT_SUBSCRIPTION` — the subscription id `az account show` must match
+  during preflight. Defaults to the maintainer's non-secret test subscription.
+  Set this to authorise the agent against your own tenant.
+- `AZORK_OIT_TENANT` — the expected tenant display name, recorded in the
+  friction report. Defaults to the maintainer's test tenant name.
+- `AZORK_OIT_ISSUES` — a comma-separated list of issue references (e.g.
+  `#12,#34`) folded into the `## Issues` section of the generated
+  `docs/oit-friction-report.md`, so friction findings can be traced back to
+  tracked work.
+
+None of these variables affect the default `azork` game binary — they are read
+only by `azork-oit`.
 
 ## Persistence
 

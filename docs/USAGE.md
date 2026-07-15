@@ -287,3 +287,77 @@ Discovered az capabilities (learned at runtime):
 - **Intent resolution.** Any input that matches no built-in verb is not rejected
   outright: AzZork ranks your words against its learned capabilities and either
   acts on a confident match or offers a "did you mean…" list.
+
+## Outside-in-testing (OIT) agent
+
+`azork-oit` is a companion binary — not the game itself — that plays AzZork like
+a real user against a **live** Azure subscription, exercises a broad catalog of
+use cases (navigation, examination, scoring, securing, mock deployment, learned
+capabilities, memory recall), records anything confusing or missing as
+"friction", and writes a Markdown report.
+
+```bash
+cargo build --bin azork-oit
+./target/debug/azork-oit --dry-run                       # offline: no live az calls
+./target/debug/azork-oit                                  # live: guardrailed run
+./target/debug/azork-oit --report docs/oit-friction-report.md
+```
+
+Flags:
+
+| Flag | Effect |
+| --- | --- |
+| `--dry-run` | Drives azork's mock backend only; never touches a live subscription. |
+| `--report PATH` | Where to write the friction report (default `docs/oit-friction-report.md`). |
+
+Every live run is bound by hard guardrails enforced in code
+(`src/oit/guardrails.rs`), not merely by convention:
+
+1. **Cost gate** — every create is checked against a conservative estimate and
+   refused above the $500/mo cap (see [`Cost-gate note`](#cost-gate-note) below);
+   only free/cheap SKUs (resource groups, `Standard_LRS` storage) are ever
+   created.
+2. **Cleanup** — everything created is tagged `azork-oit=1`, `owner=azork-oit`,
+   `ttl=<epoch>` and torn down before the run ends; teardown is verified.
+3. **Non-destructive** — only resources bearing the agent's own tags are ever
+   mutated or deleted.
+4. **Isolation** — all live resources live in `azork-oit-*` resource groups in a
+   single cheap region (`eastus`).
+
+Preflight refuses to run against any subscription/tenant other than the one it
+expects — see [`AZORK_OIT_SUBSCRIPTION` / `AZORK_OIT_TENANT`](CONFIGURATION.md#azork-oit-outside-in-testing-agent-environment-variables)
+in the configuration reference for how to point it at your own tenant, and
+`AZORK_OIT_ISSUES` to cite tracked issues in the generated report.
+
+The output is a self-contained Markdown friction report (see
+[`docs/oit-friction-report.md`](oit-friction-report.md) for an example) listing
+use cases run, friction observed, resources created/torn down, and suggested
+improvements.
+
+#### Cost-gate note
+
+The cost gate only ever evaluates estimates drawn from a small, hard-coded
+catalog of known-cheap resource kinds (`CheapResource`), so the "$500 cap" is a
+genuine runtime bound today. If the catalog is ever extended with pricier SKUs,
+the estimate fed into the gate must come from a real pricing source (e.g. the
+retail-prices API) rather than a static guess, or the cap stops being a real
+safety property.
+
+## Azure CLI extension (`az azork`)
+
+AzZork also ships as a thin Azure CLI extension so you can play it as
+`az azork` alongside your other `az` commands. See
+[`azext/README.md`](../azext/README.md) for build/install instructions; once
+installed:
+
+```bash
+az azork play                          # interactive REPL, mock backend
+az azork play --backend az             # interactive REPL, live (read-only) backend
+az azork run --commands "look; score"  # non-interactive, prints narration
+az azork version                       # show the located azork binary + version
+```
+
+The extension is a pure-Python shim with **zero third-party install
+requirements** — it locates and shells out to the compiled `azork` binary (via
+`AZORK_BIN`, a bundled `bin/azork`, or `PATH`) and does not reimplement any game
+logic.
