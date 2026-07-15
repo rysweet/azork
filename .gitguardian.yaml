@@ -14,6 +14,6 @@ version: 2
 # We scope the ignore to this single file rather than disabling scanning
 # repo-wide, so any real secret accidentally introduced elsewhere is still
 # caught.
-secret_scanner:
+secret:
   ignored_paths:
     - "src/secrets.rs"
