@@ -113,8 +113,7 @@ the default build never links a native dependency — see
 ## Agentic intent resolution (embedded)
 
 The [`src/agent_engine/`](src/agent_engine/) module embeds AzZork into the
-MIT-licensed [`recipe-runner-rs`] engine — the same way Simard and Powderfinger
-embed it. It implements the runner's `Adapter` trait (`AzorkAdapter`): *agent*
+MIT-licensed [`recipe-runner-rs`] engine. It implements the runner's `Adapter` trait (`AzorkAdapter`): *agent*
 steps resolve intent against the learned registry (deterministic, offline), *bash*
 steps delegate to the runner's CLI subprocess adapter so a recipe can shell out to
 `az`. `run_intent_recipe` runs an inline amplihack recipe with AzZork as the agent.
@@ -125,7 +124,7 @@ directly via a `path` dependency, so `cargo build`/`cargo test` at the repo root
 compile and exercise this capability **by default** — no separate crate to build,
 no reference repos to check out side-by-side, and no network access required.
 
-[`recipe-runner-rs`]: https://crates.io/crates/recipe-runner-rs
+[`recipe-runner-rs`]: vendor/recipe-runner-rs/
 
 ## Install
 
@@ -409,7 +408,7 @@ into the default `cargo build`/`cargo test`; `memory-store` does not.
 The Azure CLI extension under [`azext/`](azext/) is pure Python with **zero**
 third-party `install_requires` (it uses only the Azure CLI's own SDK).
 
-[`recipe-runner-rs`]: https://crates.io/crates/recipe-runner-rs
+[`recipe-runner-rs`]: vendor/recipe-runner-rs/
 
 
 ## Development

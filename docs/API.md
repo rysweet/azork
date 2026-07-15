@@ -306,9 +306,11 @@ Agentic resolution of unknown/ambiguous intent — AzZork never dead-ends.
   `narrate()`.
 - **`IntentResolver<A: Adapter>`** — ties an adapter to a registry; never fails.
 
-The recipe-runner-backed `AzorkAdapter` in the embedded
-[`agent_engine`](../src/agent_engine/mod.rs) module implements this
-same `Adapter` trait as a drop-in, richer alternative to `MockAdapter`.
+The embedded [`agent_engine`](../src/agent_engine/mod.rs) module's
+`AzorkAdapter` implements a *different* trait — `recipe-runner-rs`'s own
+`Adapter` seam — and uses `MockAdapter` (via this module's `Adapter` trait)
+internally to resolve its agent steps, letting an amplihack recipe compose
+AzZork's offline intent resolution with other steps (e.g. bash).
 
 ## `memory` module
 

@@ -2,8 +2,7 @@
 //!
 //! This module embeds the [`recipe-runner-rs`] engine directly into AzZork's
 //! default build (via a vendored, offline `path` dependency — see
-//! `vendor/recipe-runner-rs/`), the same way Simard and Powderfinger embed the
-//! runner in a Rust agent. It implements the runner's
+//! `vendor/recipe-runner-rs/`). It implements the runner's
 //! [`Adapter`](recipe_runner_rs::adapters::Adapter) trait, then hands it to
 //! `run_recipe`, letting an amplihack recipe orchestrate multi-step intent
 //! resolution (agent steps + bash steps) around AzZork's own learned
@@ -19,7 +18,7 @@
 //! exercise this capability by default — no separate opt-in crate or
 //! side-by-side sibling checkout is required.
 //!
-//! [`recipe-runner-rs`]: https://crates.io/crates/recipe-runner-rs
+//! [`recipe-runner-rs`]: ../../vendor/recipe-runner-rs/
 
 use std::collections::HashMap;
 
