@@ -27,7 +27,11 @@ at the azork root never compiles this crate.
   `GraphMemory` into the store. Each node becomes one `amplihack-memory`
   `Experience`; ids, usage, touch ticks, and edges ride along in metadata for a
   faithful reload. Re-saving is safe (load de-duplicates by node id, freshest
-  wins).
+  wins). Free-text `label`/`content` are passed through `azork::secrets::scrub`
+  before being written — defense-in-depth alongside `GraphMemory::remember`'s
+  own scrubbing — so a stray secret never lands in the durable store. Note
+  this only applies going forward: store files written before this scrubbing
+  was added are not retroactively rescanned.
 - `PersistentStore::load()` — rehydrate a `GraphMemory` from the store, edges and
   all. Records AzZork didn't write are ignored, so the store can be shared.
 - `PersistentStore::recall(query, limit)` — ranked recall through the external
