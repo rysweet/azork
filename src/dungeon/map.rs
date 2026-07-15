@@ -11,6 +11,7 @@ use crate::dungeon::validate;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -281,14 +282,24 @@ fn deterministic_position(name: &str, region: &str) -> (i32, i32) {
 
 /// Connect every pair of distinct rooms that share a region with one
 /// corridor edge (no self-edges, no duplicate reverse edges).
+///
+/// Rooms are first bucketed by region so only rooms within the same
+/// region are ever compared, avoiding an all-pairs scan across the
+/// entire subscription (which would be quadratic in total room count
+/// even when regions are small and numerous).
 fn same_region_edges(rooms: &[Room]) -> Vec<Edge> {
+    let mut by_region: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (idx, room) in rooms.iter().enumerate() {
+        by_region.entry(room.region.as_str()).or_default().push(idx);
+    }
+
     let mut edges = Vec::new();
-    for i in 0..rooms.len() {
-        for j in (i + 1)..rooms.len() {
-            if rooms[i].region == rooms[j].region {
+    for indices in by_region.values() {
+        for i in 0..indices.len() {
+            for j in (i + 1)..indices.len() {
                 edges.push(Edge {
-                    from: rooms[i].id.clone(),
-                    to: rooms[j].id.clone(),
+                    from: rooms[indices[i]].id.clone(),
+                    to: rooms[indices[j]].id.clone(),
                 });
             }
         }
