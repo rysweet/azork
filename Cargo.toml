@@ -25,3 +25,11 @@ path = "src/main.rs"
 default = []
 
 [dependencies]
+# Dungeon Crawler Mode's only new dependencies: defensive, structural parsing of
+# untrusted `az ... -o json` output (never fragile line/regex parsing) and
+# serialization of the map graph for the embedded JSON API. Both are pinned to
+# an exact version; nothing else in the crate needs them, and the HTTP server
+# itself is hand-rolled on `std::net::TcpListener` (no web-framework
+# dependency) to keep the footprint minimal.
+serde = { version = "=1.0.219", features = ["derive"] }
+serde_json = "=1.0.140"

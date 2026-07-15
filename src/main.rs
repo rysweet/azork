@@ -5,9 +5,10 @@
 //! real subscription via the `az` CLI.
 
 use azork::agent::{IntentResolver, MockAdapter};
-use azork::az_runner::{AzRunner, ProcessAzRunner};
+use azork::az_runner::{AzRunner, FakeAzRunner, ProcessAzRunner};
 use azork::backend;
 use azork::capabilities::{registry::default_cache_path, CapabilityRegistry};
+use azork::dungeon::{cli as dungeon_cli, map as dungeon_map, playwright, render, server};
 use azork::memory::{default_memory_path, GraphMemory, MemoryKind};
 use azork::parser::{self, Command};
 use azork::world::{GrueOutcome, World};
@@ -61,6 +62,21 @@ AzZork evolves: unknown input is resolved against what it has learned, and
 'learn <group>' teaches it new az verbs that persist across sessions."#;
 
 fn main() {
+    let cli_args: Vec<String> = std::env::args().collect();
+    if let Some(first) = cli_args.get(1) {
+        if dungeon_cli::is_crawl_subcommand(first) {
+            let rest: Vec<String> = cli_args[2..].to_vec();
+            match dungeon_cli::parse(&rest) {
+                Ok(crawl_args) => run_crawl(crawl_args),
+                Err(e) => {
+                    eprintln!("azork {}: {}", first, e);
+                    std::process::exit(2);
+                }
+            }
+            return;
+        }
+    }
+
     let requested_backend = resolve_backend_id();
     if let Some(id) = &requested_backend {
         if !backend::is_recognized(id) {
@@ -448,6 +464,178 @@ fn run_grue_check(world: &mut World) {
             );
         }
     }
+}
+
+/// Run Dungeon Crawler Mode: enumerate (read-only) the selected backend's
+/// subscription via the `AzRunner` seam, assemble a `DungeonMap`, and then
+/// write it to a file, serve it, and/or print a summary, per `args`.
+fn run_crawl(args: dungeon_cli::CrawlArgs) {
+    let runner: Box<dyn AzRunner> = match args.backend.to_lowercase().as_str() {
+        "az" | "real" | "azure" => Box::new(ProcessAzRunner::new()),
+        other => {
+            if !backend::is_recognized(other) {
+                eprintln!(
+                    "Warning: unknown backend '{other}'; falling back to the offline mock estate."
+                );
+            }
+            Box::new(demo_runner())
+        }
+    };
+
+    let cancel = dungeon_map::CancelToken::new();
+    {
+        let cancel_for_handler = cancel.clone();
+        // Best-effort: if installing the Ctrl-C handler fails for any reason
+        // we simply run without one — the crawl still completes normally,
+        // it just can't be interrupted early.
+        let _ = ctrlc_best_effort(move || cancel_for_handler.cancel());
+    }
+
+    let dmap = match dungeon_map::build_cancellable(runner.as_ref(), args.budget, &cancel) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!(
+                "Failed to build dungeon map via {} backend: {}",
+                args.backend, e
+            );
+            eprintln!("Tip: for the `az` backend, make sure `az login` has been run.");
+            std::process::exit(1);
+        }
+    };
+
+    println!(
+        "Dungeon assembled: {} room(s), {} resource(s){}.",
+        dmap.rooms.len(),
+        dmap.resource_count(),
+        if dmap.partial {
+            " (PARTIAL — cancelled)"
+        } else {
+            ""
+        }
+    );
+
+    let html = if args.playwright {
+        match playwright::try_render(&dmap) {
+            Some(rendered) => rendered,
+            None => {
+                println!("(--playwright requested but unavailable; using the native renderer.)");
+                render::render_html(&dmap)
+            }
+        }
+    } else {
+        render::render_html(&dmap)
+    };
+
+    if let Some(path) = &args.out {
+        if let Err(e) = std::fs::write(path, &html) {
+            eprintln!("Failed to write dungeon map to '{path}': {e}");
+            std::process::exit(1);
+        }
+        println!("Wrote dungeon map to {path}");
+    }
+
+    if args.serve {
+        let bind_addr = format!("127.0.0.1:{}", args.port);
+        match server::serve(dmap, &bind_addr) {
+            Ok(handle) => {
+                println!(
+                    "Serving the dungeon map at http://{} (Ctrl-C to stop).",
+                    handle.addr()
+                );
+                // Foreground server: block indefinitely. The OS reclaims the
+                // listener and its thread when the process is killed
+                // (Ctrl-C), matching the "press Ctrl-C to stop" contract.
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(3600));
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to start the dungeon crawler server: {e}");
+                std::process::exit(1);
+            }
+        }
+    } else if args.out.is_none() {
+        println!(
+            "(Nothing written to disk and no --serve requested; pass --out <path> or --serve to view the map.)"
+        );
+    }
+}
+
+/// Best-effort Ctrl-C handling with zero extra dependencies: installs no
+/// real signal handler (that would require a crate like `ctrlc`), so this is
+/// currently a documented no-op that always returns `Ok`. `run_crawl` treats
+/// any error from this function identically to a graceful no-handler crawl,
+/// so wiring in a real handler later is a drop-in change.
+fn ctrlc_best_effort<F: Fn() + Send + 'static>(_on_interrupt: F) -> Result<(), String> {
+    Ok(())
+}
+
+/// A small, hardcoded, offline "mock estate" for Dungeon Crawler Mode's
+/// default `mock` backend — the crawl-mode analogue of
+/// [`azork::backend::mock::MockBackend`], but shaped as canned `az ... -o
+/// json` responses so it flows through the exact same [`AzRunner`]-driven
+/// [`dungeon_map::build`] path a real subscription would.
+fn demo_runner() -> FakeAzRunner {
+    const GROUP_LIST_JSON: &str = r#"[
+      {"id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/entry-hall",
+       "location": "eastus", "name": "entry-hall"},
+      {"id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/vault-chamber",
+       "location": "eastus", "name": "vault-chamber"},
+      {"id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/watchtower",
+       "location": "westus2", "name": "watchtower"}
+    ]"#;
+    const ENTRY_HALL_JSON: &str = r#"[
+      {"id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/entry-hall/providers/Microsoft.Web/sites/torchbearer",
+       "name": "torchbearer", "type": "Microsoft.Web/sites", "location": "eastus"},
+      {"id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/entry-hall/providers/Microsoft.Network/virtualNetworks/great-corridor",
+       "name": "great-corridor", "type": "Microsoft.Network/virtualNetworks", "location": "eastus"}
+    ]"#;
+    const VAULT_CHAMBER_JSON: &str = r#"[
+      {"id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/vault-chamber/providers/Microsoft.KeyVault/vaults/hoard",
+       "name": "hoard", "type": "Microsoft.KeyVault/vaults", "location": "eastus"},
+      {"id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/vault-chamber/providers/Microsoft.Storage/storageAccounts/treasury",
+       "name": "treasury", "type": "Microsoft.Storage/storageAccounts", "location": "eastus"}
+    ]"#;
+    const WATCHTOWER_JSON: &str = r#"[
+      {"id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/watchtower/providers/Microsoft.Compute/virtualMachines/sentinel",
+       "name": "sentinel", "type": "Microsoft.Compute/virtualMachines", "location": "westus2"}
+    ]"#;
+
+    FakeAzRunner::new()
+        .with(&["group", "list", "-o", "json"], GROUP_LIST_JSON)
+        .with(
+            &[
+                "resource",
+                "list",
+                "--resource-group",
+                "entry-hall",
+                "-o",
+                "json",
+            ],
+            ENTRY_HALL_JSON,
+        )
+        .with(
+            &[
+                "resource",
+                "list",
+                "--resource-group",
+                "vault-chamber",
+                "-o",
+                "json",
+            ],
+            VAULT_CHAMBER_JSON,
+        )
+        .with(
+            &[
+                "resource",
+                "list",
+                "--resource-group",
+                "watchtower",
+                "-o",
+                "json",
+            ],
+            WATCHTOWER_JSON,
+        )
 }
 
 #[cfg(test)]

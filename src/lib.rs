@@ -12,5 +12,6 @@ pub mod world;
 pub mod agent;
 pub mod az_runner;
 pub mod capabilities;
+pub mod dungeon;
 pub mod memory;
 pub mod oit;

@@ -182,6 +182,36 @@ Rooms beyond the cap are still navigable; their contents are lazily summarised.
 > game (`drop`) operate on the in-memory world model only — AzZork does not
 > delete real Azure resources.
 
+## Dungeon Crawler Mode 🗺️
+
+Prefer a map to a REPL? `azork crawl` (alias `azork dungeon`) turns your whole
+subscription into a single explorable, hand-drawn-style dungeon map instead of
+one resource group at a time: resource groups become rooms, resources become
+icons on the floor, and shared regions/relationships become corridors.
+
+```bash
+azork crawl --backend az --serve
+```
+
+```
+🗺  Mapping subscription "Contoso-Prod" ...
+    Discovered 14 resource groups, 87 resources.
+🕯  Dungeon assembled. Serving map at http://127.0.0.1:53214
+```
+
+Open the printed URL and click any room to pop up its contents: each resource
+shows its icon, a deep link straight to that resource's page in the Azure
+portal, and one or more suggested read-only `az` commands to inspect it
+(display-only — nothing is ever executed for you).
+
+It's **strictly read-only** (only `list`/`show`-class `az` calls, through the
+same `AzRunner` seam as the rest of AzZork), renders fully offline via a
+built-in native SVG/HTML renderer with no fixed subscription-size cap, and
+optionally (behind `--playwright`, always degrading gracefully) attempts a
+richer hand-drawn pass via a headless browser.
+
+Full details: [docs/DUNGEON-CRAWLER.md](docs/DUNGEON-CRAWLER.md).
+
 ## Outside-in-testing (OIT) agent 🤖
 
 `azork-oit` is a companion binary (`src/bin/azork-oit.rs`) that drives AzZork like
@@ -377,6 +407,7 @@ Full documentation lives in [`docs/`](docs/):
 - [Tutorial](docs/TUTORIAL.md) — a guided playthrough from first `look` to Cloud Guardian.
 - [Configuration reference](docs/CONFIGURATION.md) — backend selection, the mock world, and the read-only `az` backend.
 - [API / module reference](docs/API.md) — internal architecture for contributors.
+- [Dungeon Crawler Mode](docs/DUNGEON-CRAWLER.md) — the map view: `azork crawl`, icons, the local server, and interactive room pop-ups.
 
 ## License
 
