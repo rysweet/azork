@@ -12,12 +12,16 @@ name = "azork"
 path = "src/main.rs"
 
 [features]
-# Default build is fully offline and dependency-free: the graph memory uses the
-# in-memory `GraphMemory` shim. `persistent` is the opt-in seam for the native
-# `lbug`-backed `amplihack-memory` store (wired in a later step); it deliberately
-# never links into the default build so `cargo build`/`cargo test` stay light,
-# offline, and green.
+# The default build is fully offline and dependency-free: the graph memory uses
+# the in-memory `GraphMemory` store with a hand-rolled on-disk format, so
+# `cargo build`/`cargo test` stay light, offline, and green on a fresh clone.
+#
+# Durable persistence backed by the native `amplihack-memory` (SQLite/lbug) store
+# is provided by the opt-in `memory-store/` companion crate, NOT by a dependency
+# in this manifest. That crate is deliberately kept out of the azork package (like
+# `agentic-bridge/`) because cargo resolves path/optional dependencies even when a
+# feature is off — pulling `amplihack-memory` into this manifest would break the
+# zero-dependency, offline fresh-clone build. See `memory-store/README.md`.
 default = []
-persistent = []
 
 [dependencies]

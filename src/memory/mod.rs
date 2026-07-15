@@ -42,8 +42,9 @@ pub enum MemoryKind {
 }
 
 impl MemoryKind {
-    /// Stable token used in the on-disk format.
-    fn as_token(self) -> &'static str {
+    /// Stable token used in the on-disk format (and by external persistence
+    /// backends that mirror this graph).
+    pub fn as_token(self) -> &'static str {
         match self {
             MemoryKind::Capability => "capability",
             MemoryKind::Room => "room",
@@ -54,7 +55,7 @@ impl MemoryKind {
     }
 
     /// Parse a token produced by [`MemoryKind::as_token`].
-    fn from_token(s: &str) -> Option<MemoryKind> {
+    pub fn from_token(s: &str) -> Option<MemoryKind> {
         match s {
             "capability" => Some(MemoryKind::Capability),
             "room" => Some(MemoryKind::Room),
@@ -214,6 +215,36 @@ impl GraphMemory {
             .filter(|e| e.from == id && relation.map(|r| r == e.relation).unwrap_or(true))
             .filter_map(|e| self.nodes.get(&e.to))
             .collect()
+    }
+
+    /// All nodes in stable id order (for external mirroring / persistence).
+    pub fn iter_nodes(&self) -> impl Iterator<Item = &MemoryNode> {
+        self.nodes.values()
+    }
+
+    /// Every edge as a `(from, relation, to)` triple, in insertion order
+    /// (for external mirroring / persistence).
+    pub fn all_edges(&self) -> Vec<(&str, &str, &str)> {
+        self.edges
+            .iter()
+            .map(|e| (e.from.as_str(), e.relation.as_str(), e.to.as_str()))
+            .collect()
+    }
+
+    /// Insert a fully-formed node verbatim, preserving its id, usage, and touch
+    /// tick. Used when rehydrating the graph from an external store; the logical
+    /// clock and id sequence are advanced so later [`remember`](Self::remember)
+    /// calls never collide with a restored id.
+    pub fn insert_node(&mut self, node: MemoryNode) {
+        self.clock = self.clock.max(node.last_touch);
+        if let Some(n) = node
+            .id
+            .strip_prefix('n')
+            .and_then(|s| s.parse::<u64>().ok())
+        {
+            self.seq = self.seq.max(n);
+        }
+        self.nodes.insert(node.id.clone(), node);
     }
 
     /// Reinforce a node: bump its usage and mark it freshly touched. This is the

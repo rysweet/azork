@@ -99,10 +99,15 @@ Simard's cognitive memory) that accumulates across sessions:
 - **`friction <note>`** records anything confusing or missing so it can be fixed
   later; unresolved intents are auto-recorded as friction too.
 
-The default memory is a fully in-memory/offline `GraphMemory` shim (deterministic,
-line-based persistence, zero deps). A `persistent` Cargo feature reserves the seam
-for the native `lbug`-backed `amplihack-memory` store; it never links into the
-default build so `cargo build`/`cargo test` stay light and green.
+The default memory is a fully in-memory/offline `GraphMemory` store (deterministic,
+line-based persistence, zero deps) so `cargo build`/`cargo test` stay light and
+green. Durable, SQLite-backed persistence over the native `amplihack-memory`
+library is available as an **opt-in companion crate**,
+[`memory-store/`](memory-store/): it mirrors the whole graph (nodes **and** edges)
+into an `amplihack-memory` store, reloads it faithfully across sessions, and offers
+full-text ranked recall through the library's own search engine. Like the agentic
+bridge, it is kept out of the azork package so the default build never links a
+native dependency — see [`memory-store/README.md`](memory-store/README.md).
 
 ## Agentic intent resolution (optional companion crate)
 
@@ -338,8 +343,9 @@ optional integrations pull external crates only when explicitly built:
 - **`agentic-bridge/`** (separate companion crate) → the MIT-licensed
   [`recipe-runner-rs`] agentic `Adapter` engine (and its transitive deps). Kept
   out of the azork package so the default build stays zero-dep.
-- **`persistent`** feature → reserves the seam for the MIT-licensed
-  `amplihack-memory` (native `lbug` ladybug graph) store.
+- **`memory-store/`** (separate companion crate) → durable graph memory over the
+  MIT-licensed `amplihack-memory` library (SQLite-backed, `lbug`-capable). Also
+  kept out of the azork package so the default build stays zero-dep.
 
 Both are MIT-compatible with this project's MIT license and neither links into the
 default `cargo build`/`cargo test`, which stay light and offline.
@@ -360,6 +366,7 @@ cargo clippy --all-targets   # lints (CI enforces -D warnings)
 
 cargo build --bin azork-oit          # the live outside-in-testing agent
 (cd agentic-bridge && cargo test)    # opt-in recipe-runner-rs companion crate
+(cd memory-store && cargo test)      # opt-in amplihack-memory durable-memory crate
 ```
 
 ## Documentation
