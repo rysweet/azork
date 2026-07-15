@@ -4,9 +4,8 @@
 //! broad catalog of use cases, records friction, and (in live mode) creates a
 //! few cheap/free resources under hard guardrails before tearing them all down.
 //!
-//! Architecture mirrors the recipe-runner-driven agents in Simard/Powderfinger:
-//! a deterministic, unit-tested library core ([`azork::oit`]) with this thin live
-//! driver on top. Every safety rule is enforced in code via
+//! Architecture is a deterministic, unit-tested library core ([`azork::oit`])
+//! with this thin live driver on top. Every safety rule is enforced in code via
 //! [`azork::oit::guardrails`], not merely by convention.
 //!
 //! Usage:

@@ -80,6 +80,31 @@ Backend::build_world ───────────────────�
 All `az` access — the live `AzBackend`, capability derivation, and Dungeon Crawler Mode's map enumeration — passes through the `AzRunner` trait, so tests inject a `FakeAzRunner`
 and never touch the real CLI or network.
 
+### Third-party dependencies
+
+The core game, self-evolution, and graph memory add no license obligations
+beyond the small set of dependencies in the main `Cargo.toml`. The default
+build also embeds one agentic integration and keeps one durable-storage
+integration opt-in:
+
+- **`src/agent_engine/`** (embedded module, main crate) → the MIT-licensed
+  [`recipe-runner-rs`] agentic `Adapter` engine (and its transitive deps),
+  vendored offline under [`vendor/recipe-runner-rs/`](../vendor/recipe-runner-rs/)
+  and depended on via a `path` dependency. Compiled and tested by default
+  `cargo build`/`cargo test` — no opt-in step required.
+- **`memory-store/`** (separate companion crate) → durable graph memory over the
+  MIT-licensed `amplihack-memory` library (SQLite-backed, `lbug`-capable). Kept
+  out of the azork package so the default build stays zero-dep for that
+  integration.
+
+Both are MIT-compatible with this project's MIT license. `agent_engine` compiles
+into the default `cargo build`/`cargo test`; `memory-store` does not.
+
+The Azure CLI extension under [`azext/`](../azext/) is pure Python with **zero**
+third-party `install_requires` (it uses only the Azure CLI's own SDK).
+
+[`recipe-runner-rs`]: ../vendor/recipe-runner-rs/
+
 ## `parser` module
 
 Turns a raw line of player input into a structured, total `Command`. The parser
