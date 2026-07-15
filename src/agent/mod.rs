@@ -7,10 +7,9 @@
 //!
 //! The default [`MockAdapter`] is deterministic and fully offline: it ranks the
 //! registry's learned capabilities against the input and returns the best
-//! matches as suggestions ("did you mean…"). This mirrors the recipe-runner
-//! `Adapter` seam used by Simard/Powderfinger — a richer, live adapter can be
-//! slotted in behind the same trait for real agentic steps — while guaranteeing
-//! the offline build never performs network or subprocess work.
+//! matches as suggestions ("did you mean…"). This is the `Adapter` seam a
+//! richer, live agent back-end can slot into for real agentic steps, while
+//! guaranteeing the offline build never performs network or subprocess work.
 
 use crate::capabilities::{Capability, CapabilityRegistry};
 

@@ -3,7 +3,7 @@
 An **optional companion crate** that gives AzZork **durable, SQLite-backed graph
 memory** on top of the MIT-licensed
 [`amplihack-memory`](https://github.com/rysweet/amplihack-memory-lib) library —
-the same cognitive-memory crate Simard uses.
+the native `amplihack-memory` cognitive-memory crate.
 
 AzZork's own [`GraphMemory`](../src/memory/mod.rs) is a small, dependency-free,
 fully-offline brick with a hand-rolled on-disk format. This crate is the *live*
