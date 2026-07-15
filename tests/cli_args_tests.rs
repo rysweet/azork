@@ -7,7 +7,6 @@
 //! binary as a subprocess, the same way a human/CI would invoke it, and
 //! asserts on its externally-observable contract.
 
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -159,14 +158,4 @@ fn update_subcommand_is_not_rejected_as_unknown() {
 fn no_args_launches_without_usage_error() {
     let out = run(&[]);
     assert_ne!(out.status.code(), Some(2));
-}
-
-// Sanity check that `run`'s helper for feeding stdin compiles cleanly even
-// though current tests don't need to write to stdin (kept for future tests
-// that exercise the REPL with scripted input).
-#[allow(dead_code)]
-fn write_stdin(child: &mut std::process::Child, input: &str) {
-    if let Some(stdin) = child.stdin.as_mut() {
-        let _ = stdin.write_all(input.as_bytes());
-    }
 }

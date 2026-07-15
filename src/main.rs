@@ -239,13 +239,6 @@ fn record_room(memory: &mut GraphMemory, world: &World) {
     }
 }
 
-/// Determine which backend the user explicitly requested via `--backend <id>`
-/// (or `-b`, `--backend=<id>`) or the `AZORK_BACKEND` env var.
-///
-/// Returns `None` when no backend was requested, so the caller can default to
-/// the mock estate. An explicit-but-empty request (e.g. a trailing `--backend`
-/// with no value) yields `Some("")`, which the caller treats as unrecognized
-/// and warns about rather than silently defaulting.
 /// Validate that every remaining top-level argument is a recognized
 /// `--backend`/`-b` flag before the game launches. Anything else — an
 /// unrecognized subcommand (including bare `help`, which is not a
@@ -282,6 +275,13 @@ fn reject_unrecognized_args_or_exit(args: &[String]) {
     }
 }
 
+/// Determine which backend the user explicitly requested via `--backend <id>`
+/// (or `-b`, `--backend=<id>`) or the `AZORK_BACKEND` env var.
+///
+/// Returns `None` when no backend was requested, so the caller can default to
+/// the mock estate. An explicit-but-empty request (e.g. a trailing `--backend`
+/// with no value) yields `Some("")`, which the caller treats as unrecognized
+/// and warns about rather than silently defaulting.
 fn resolve_backend_id() -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
