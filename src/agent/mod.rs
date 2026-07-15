@@ -13,6 +13,26 @@
 
 use crate::capabilities::{Capability, CapabilityRegistry};
 
+/// Maximum number of characters of free-text player input that are ever
+/// echoed back to the terminal or persisted to the memory graph as part of
+/// an "unresolved intent" friction note. Without this cap a very long line
+/// of unrecognised input would be stored verbatim in `memory.graph` and
+/// echoed to the terminal in full, growing the on-disk memory file
+/// unbounded (see GitHub issue #32).
+pub const MAX_INTENT_ECHO_LEN: usize = 200;
+
+/// Truncate `raw` to at most [`MAX_INTENT_ECHO_LEN`] characters (on a char
+/// boundary, so multi-byte UTF-8 sequences are never split), appending an
+/// indicator when truncation occurred. Used both before narrating unresolved
+/// input back to the player and before persisting it as friction memory.
+pub fn truncate_intent(raw: &str) -> String {
+    if raw.chars().count() <= MAX_INTENT_ECHO_LEN {
+        return raw.to_string();
+    }
+    let truncated: String = raw.chars().take(MAX_INTENT_ECHO_LEN).collect();
+    format!("{truncated}...(truncated)")
+}
+
 /// The outcome of trying to resolve an ambiguous / unknown player intent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolution {
@@ -62,7 +82,7 @@ impl Resolution {
             Resolution::Unresolved(raw) => format!(
                 "The incantation \"{}\" stirs nothing yet. Try 'learn <group>' to \
                  discover new powers, or 'help'.",
-                raw.trim()
+                truncate_intent(raw.trim())
             ),
         }
     }
@@ -271,5 +291,35 @@ mod tests {
         let r = IntentResolver::new(MockAdapter::new(), &reg);
         assert!(!r.resolve("list").narrate().is_empty());
         assert!(!r.resolve("nonsense-token").narrate().is_empty());
+    }
+
+    #[test]
+    fn truncate_intent_leaves_short_input_untouched() {
+        let short = "frobnicate the widget";
+        assert_eq!(truncate_intent(short), short);
+    }
+
+    #[test]
+    fn truncate_intent_caps_long_input_with_indicator() {
+        let long = "x".repeat(2400);
+        let truncated = truncate_intent(&long);
+        assert!(truncated.len() < long.len());
+        assert!(truncated.ends_with("...(truncated)"));
+        assert_eq!(
+            truncated.chars().count(),
+            MAX_INTENT_ECHO_LEN + "...(truncated)".chars().count()
+        );
+    }
+
+    #[test]
+    fn unresolved_narration_is_bounded_for_long_input() {
+        let reg = registry();
+        let r = IntentResolver::new(MockAdapter::new(), &reg);
+        let long_input = "z".repeat(2400);
+        let narration = r.resolve(&long_input).narrate();
+        assert!(narration.contains("...(truncated)"));
+        // The narration wraps the (possibly truncated) input in extra prose,
+        // but it must never grow proportionally with an unbounded input.
+        assert!(narration.len() < 400);
     }
 }

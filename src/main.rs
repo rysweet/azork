@@ -337,7 +337,10 @@ where
             // An input AzZork could not resolve is friction worth remembering.
             if matches!(resolution, azork::agent::Resolution::Unresolved(_)) {
                 memory.record_friction(
-                    &format!("unresolved intent: {}", raw.trim()),
+                    &format!(
+                        "unresolved intent: {}",
+                        azork::agent::truncate_intent(raw.trim())
+                    ),
                     &["intent", "unresolved"],
                 );
             }
@@ -670,6 +673,7 @@ fn demo_runner() -> FakeAzRunner {
 mod tests {
     use super::*;
     use azork::backend::{mock::MockBackend, Backend};
+    use std::path::PathBuf;
 
     #[test]
     fn cast_deploy_is_mock_safe() {
@@ -695,5 +699,49 @@ mod tests {
     fn confirm_defaults_no_on_eof() {
         let mut it: std::vec::IntoIter<io::Result<String>> = vec![].into_iter();
         assert!(!confirm("go?", &mut it));
+    }
+
+    /// GitHub issue #32: a very long unresolved free-text intent must not be
+    /// persisted verbatim into the memory graph — it should be truncated
+    /// before being recorded as friction.
+    #[test]
+    fn long_unresolved_intent_is_truncated_before_persisting() {
+        let mut world = MockBackend::new().build_world().unwrap();
+        let mut registry = CapabilityRegistry::new();
+        let mut memory = GraphMemory::new();
+        let runner = demo_runner();
+        let cache_path = PathBuf::from("/tmp/azork-test-cache-issue-32");
+        let mut lines: std::vec::IntoIter<io::Result<String>> = vec![].into_iter();
+
+        let long_input = "q".repeat(2400);
+        let cmd = Command::Unknown(long_input.clone());
+
+        handle(
+            &mut world,
+            cmd,
+            &mut lines,
+            &mut registry,
+            &mut memory,
+            &runner,
+            &cache_path,
+        );
+
+        let hits = memory.recall("unresolved intent", None, 10);
+        assert!(
+            !hits.is_empty(),
+            "expected an unresolved-intent friction node to be recorded"
+        );
+        for n in hits {
+            assert!(
+                n.content.len() < long_input.len(),
+                "persisted friction note should be truncated, was {} chars",
+                n.content.len()
+            );
+            assert!(
+                n.content.contains("...(truncated)"),
+                "persisted friction note should carry a truncation indicator: {}",
+                n.content
+            );
+        }
     }
 }
