@@ -251,8 +251,12 @@ The updater is built to be safe by default:
   with exit code `3` and touches nothing.
 - **Anti-rollback.** Only a strictly greater semantic version is treated as an
   update (`is_newer` uses `>` only). Draft and pre-release releases are ignored.
-- **TLS only.** All network access uses HTTPS (rustls). Requests go only to
-  GitHub's release hosts.
+- **TLS only.** All network access uses HTTPS (rustls). The **initial** request
+  URL is checked against a host allowlist (`api.github.com`, `github.com`,
+  `objects.githubusercontent.com`). GitHub redirects release-asset downloads to
+  rotating storage hosts, so redirect targets are **not** re-validated against
+  the allowlist; their integrity is instead guaranteed end-to-end by TLS plus the
+  fail-closed SHA-256 verification below.
 - **No privilege escalation.** The updater writes only to the current
   executable's own path. If that path is not writable it exits `4` and makes no
   changes — it never invokes `sudo` or otherwise elevates.
@@ -261,8 +265,12 @@ The updater is built to be safe by default:
 - **Atomic self-replace.** The new binary is written to a temporary file in the
   target directory and then atomically renamed over the old one, so an
   interrupted update never leaves a half-written executable.
-- **Bounded reads.** Responses are parsed against a fixed schema with a size cap
-  to resist decompression bombs and malformed payloads.
+- **Bounded reads (compressed *and* decompressed).** HTTP responses are parsed
+  against a fixed schema and capped at 512 MiB of *compressed* download to resist
+  malformed payloads. Archive extraction independently caps the *decompressed*
+  binary at 512 MiB and aborts (removing any partial file) if the tar entry
+  exceeds it, so a checksum-consistent but malicious release cannot exhaust disk
+  via a decompression bomb.
 - **No telemetry / no secrets.** The updater sends no analytics and logs no
   tokens or signed URLs.
 - **User-gated & inert under automation.** The interactive prompt is opt-in and
@@ -324,6 +332,7 @@ src/update/
 │                     - fetch latest release JSON, asset bytes, and .sha256
 ├── checksum.rs     verify_sha256()  fail-closed verification before install
 ├── archive.rs      traversal-safe .tar.gz extraction of the expected binary
+│                     (streamed to disk, capped at 512 MiB decompressed)
 ├── install.rs      atomic self-replace of the running executable
 └── post_install.rs .installed-version stamp + self-heal drift reconciliation
 ```
