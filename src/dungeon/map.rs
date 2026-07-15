@@ -6,6 +6,7 @@
 //! `docs/DUNGEON-CRAWLER.md#the-map-model` for the full contract.
 
 use crate::az_runner::AzRunner;
+use crate::dungeon::concurrency::{backoff_with_jitter, AimdLimiter, ThrottleDetector};
 use crate::dungeon::icons;
 use crate::dungeon::validate;
 use serde::{Deserialize, Serialize};
@@ -13,8 +14,19 @@ use serde_json::Value;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::process::Output;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+
+/// Base delay for the throttle-triggered backoff on a single `az` call
+/// (before the [`AimdLimiter`]'s own concurrency shrink kicks in). Doubled
+/// per attempt and jittered by [`backoff_with_jitter`].
+const BASE_BACKOFF: Duration = Duration::from_millis(200);
+/// Max attempts (1 initial + retries) for a single `az` call that keeps
+/// reporting a throttling signal.
+const MAX_THROTTLE_ATTEMPTS: u32 = 4;
 
 /// Soft default cap on in-memory resources buffered per enumeration window
 /// before flushing into the map graph (see `--budget` in the CLI). This is a
@@ -156,8 +168,8 @@ pub fn build_cancellable(
         });
     }
 
-    let group_out = runner
-        .run(&["group", "list", "-o", "json"])
+    let limiter = AimdLimiter::new();
+    let group_out = call_with_throttle_retry(runner, &["group", "list", "-o", "json"], &limiter)
         .map_err(|e| format!("failed to invoke `az group list`: {e}"))?;
     if !group_out.status.success() {
         return Err(format!(
@@ -170,82 +182,73 @@ pub fn build_cancellable(
         Err(e) => return Err(format!("could not parse `az group list` output: {e}")),
     };
 
-    let mut rooms: Vec<Room> = Vec::with_capacity(groups.len());
-    let mut subscription = "unknown".to_string();
-    let mut partial = false;
+    // Rooms are written by their original index from worker threads, never
+    // pushed — so the final, filtered order is byte-identical to the old
+    // sequential loop's output regardless of which worker finishes which
+    // group first.
+    let slots: Mutex<Vec<Option<Room>>> = Mutex::new(vec![None; groups.len()]);
+    let subscription: Mutex<String> = Mutex::new("unknown".to_string());
+    let partial = AtomicBool::new(false);
+    let cursor = AtomicUsize::new(0);
 
-    for group in &groups {
-        if cancel.is_cancelled() {
-            partial = true;
-            break;
-        }
+    // Never spawn more worker threads than there are groups to process, and
+    // fall back to a small fixed pool if the host can't report its own
+    // available parallelism.
+    let worker_count = thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(groups.len().max(1))
+        .max(1);
 
-        let name = match group.get("name").and_then(Value::as_str) {
-            Some(n) if validate::is_valid_resource_group_name(n) => n.to_string(),
-            None => continue, // Malformed row: no usable room id, skip it.
-            Some(_) => continue,
-        };
-        let region = group
-            .get("location")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string();
+    thread::scope(|scope| {
+        for _ in 0..worker_count {
+            let groups = &groups;
+            let slots = &slots;
+            let subscription = &subscription;
+            let partial = &partial;
+            let cursor = &cursor;
+            let limiter = &limiter;
+            scope.spawn(move || loop {
+                if cancel.is_cancelled() {
+                    partial.store(true, Ordering::SeqCst);
+                    break;
+                }
+                let idx = cursor.fetch_add(1, Ordering::SeqCst);
+                if idx >= groups.len() {
+                    break;
+                }
+                // Re-check right before doing any work for this group, so a
+                // cancellation requested while other workers were busy is
+                // still honored promptly rather than only at the next loop
+                // iteration boundary.
+                if cancel.is_cancelled() {
+                    partial.store(true, Ordering::SeqCst);
+                    break;
+                }
 
-        let (x, y) = deterministic_position(&name, &region);
-        let mut resources: Vec<ResourceNode> = Vec::with_capacity(budget.min(64));
+                let processed = process_one_group(runner, &groups[idx], budget, limiter);
 
-        let res_out = runner.run(&["resource", "list", "--resource-group", &name, "-o", "json"]);
-        if let Ok(out) = res_out {
-            if out.status.success() {
-                if let Ok(entries) = serde_json::from_slice::<Vec<Value>>(&out.stdout) {
-                    for entry in &entries {
-                        let (Some(id), Some(rname), Some(kind)) = (
-                            entry.get("id").and_then(Value::as_str),
-                            entry.get("name").and_then(Value::as_str),
-                            entry.get("type").and_then(Value::as_str),
-                        ) else {
-                            continue; // Skip a single malformed resource entry.
-                        };
-                        let Some(parsed_id) = validate::parse_resource_id(id) else {
-                            continue;
-                        };
-                        if subscription == "unknown" {
-                            if let Some(sub) = subscription_from_id(parsed_id.raw()) {
-                                subscription = sub;
-                            }
-                        }
-                        let res_region = entry
-                            .get("location")
-                            .and_then(Value::as_str)
-                            .unwrap_or(&region)
-                            .to_string();
-                        resources.push(ResourceNode {
-                            id: parsed_id.raw().to_string(),
-                            name: rname.to_string(),
-                            kind: kind.to_string(),
-                            region: res_region,
-                            icon: icons::icon_for(kind).to_string(),
-                        });
+                if let Some(sub) = processed.subscription {
+                    let mut guard = subscription.lock().unwrap_or_else(|e| e.into_inner());
+                    if *guard == "unknown" {
+                        *guard = sub;
                     }
                 }
-                // A parse failure for this room's resources is a recoverable
-                // per-room skip: the room is still recorded, just empty.
-            }
-            // A non-zero exit for this room's resources is likewise a
-            // recoverable per-room skip.
+                if let Some(room) = processed.room {
+                    slots.lock().unwrap_or_else(|e| e.into_inner())[idx] = Some(room);
+                }
+            });
         }
+    });
 
-        // The room's display name is the same field already validated as
-        // `name` above; reuse it instead of re-parsing the JSON value.
-        rooms.push(Room {
-            name: name.clone(),
-            id: name,
-            region,
-            x,
-            y,
-            resources,
-        });
-    }
+    let mut rooms: Vec<Room> = slots
+        .into_inner()
+        .unwrap_or_else(|e| e.into_inner())
+        .into_iter()
+        .flatten()
+        .collect();
+    let subscription = subscription.into_inner().unwrap_or_else(|e| e.into_inner());
+    let partial = partial.load(Ordering::SeqCst);
 
     resolve_room_collisions(&mut rooms);
     let edges = same_region_edges(&rooms);
@@ -256,6 +259,146 @@ pub fn build_cancellable(
         edges,
         partial,
     })
+}
+
+/// The outcome of enumerating a single resource group: the [`Room`] it
+/// produced (`None` if the group's own JSON row was malformed and had to be
+/// skipped, matching the pre-parallelization behavior), and a subscription
+/// id/name discovered from one of its resources, if any.
+struct ProcessedGroup {
+    room: Option<Room>,
+    subscription: Option<String>,
+}
+
+/// Enumerate one resource group's resources into a [`Room`]. Pure aside from
+/// the `runner.run` call, so it's independently testable and safely callable
+/// from any worker thread — it borrows only `runner` (`Send + Sync`) and a
+/// `&AimdLimiter` (internally synchronized).
+fn process_one_group(
+    runner: &dyn AzRunner,
+    group: &Value,
+    budget: usize,
+    limiter: &AimdLimiter,
+) -> ProcessedGroup {
+    let name = match group.get("name").and_then(Value::as_str) {
+        Some(n) if validate::is_valid_resource_group_name(n) => n.to_string(),
+        // Malformed row: no usable room id, skip it (matches the original
+        // sequential `continue`).
+        _ => {
+            return ProcessedGroup {
+                room: None,
+                subscription: None,
+            }
+        }
+    };
+    let region = group
+        .get("location")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+
+    let (x, y) = deterministic_position(&name, &region);
+    let mut resources: Vec<ResourceNode> = Vec::with_capacity(budget.min(64));
+    let mut found_subscription = None;
+
+    let res_out = call_with_throttle_retry(
+        runner,
+        &["resource", "list", "--resource-group", &name, "-o", "json"],
+        limiter,
+    );
+    if let Ok(out) = res_out {
+        if out.status.success() {
+            if let Ok(entries) = serde_json::from_slice::<Vec<Value>>(&out.stdout) {
+                for entry in &entries {
+                    let (Some(id), Some(rname), Some(kind)) = (
+                        entry.get("id").and_then(Value::as_str),
+                        entry.get("name").and_then(Value::as_str),
+                        entry.get("type").and_then(Value::as_str),
+                    ) else {
+                        continue; // Skip a single malformed resource entry.
+                    };
+                    let Some(parsed_id) = validate::parse_resource_id(id) else {
+                        continue;
+                    };
+                    if found_subscription.is_none() {
+                        found_subscription = subscription_from_id(parsed_id.raw());
+                    }
+                    let res_region = entry
+                        .get("location")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&region)
+                        .to_string();
+                    resources.push(ResourceNode {
+                        id: parsed_id.raw().to_string(),
+                        name: rname.to_string(),
+                        kind: kind.to_string(),
+                        region: res_region,
+                        icon: icons::icon_for(kind).to_string(),
+                    });
+                }
+            }
+            // A parse failure for this room's resources is a recoverable
+            // per-room skip: the room is still recorded, just empty.
+        }
+        // A non-zero exit for this room's resources is likewise a
+        // recoverable per-room skip.
+    }
+
+    ProcessedGroup {
+        room: Some(Room {
+            name: name.clone(),
+            id: name,
+            region,
+            x,
+            y,
+            resources,
+        }),
+        subscription: found_subscription,
+    }
+}
+
+/// Run `runner.run(args)` under the concurrency gate of `limiter`, retrying
+/// with jittered backoff (up to [`MAX_THROTTLE_ATTEMPTS`]) if the response
+/// looks like Azure throttling ([`ThrottleDetector`]), and reporting the
+/// outcome to `limiter` so its AIMD ceiling adapts. Any other failure
+/// (non-throttling non-zero exit, or an `io::Error` from the runner itself,
+/// e.g. a timeout) is returned immediately without retrying here — that
+/// classification is unchanged from the pre-parallelization behavior and is
+/// left to the caller.
+fn call_with_throttle_retry(
+    runner: &dyn AzRunner,
+    args: &[&str],
+    limiter: &AimdLimiter,
+) -> std::io::Result<Output> {
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        let permit = limiter.acquire();
+        let result = runner.run(args);
+        drop(permit); // Release the slot before any retry sleep.
+
+        match &result {
+            Ok(out) if out.status.success() => {
+                limiter.report_success();
+                return result;
+            }
+            Ok(out) => {
+                let text = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                match ThrottleDetector::detect(&text) {
+                    Some(floor) if attempt < MAX_THROTTLE_ATTEMPTS => {
+                        limiter.report_throttle();
+                        thread::sleep(backoff_with_jitter(BASE_BACKOFF, attempt, floor));
+                    }
+                    _ => return result,
+                }
+            }
+            Err(_) => return result,
+        }
+    }
 }
 
 /// Extract the subscription id/name from a resource's ARM id

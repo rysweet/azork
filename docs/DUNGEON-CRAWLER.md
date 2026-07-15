@@ -600,6 +600,15 @@ Crawler Mode will map. Instead, enumeration is adaptive:
   whatever has been assembled so far, clearly labeled as a partial map (with a
   note on how many rooms/resources were seen before cancellation), rather than
   losing all progress or hanging.
+- **Parallel, self-tuning resource-group enumeration** — resource groups are
+  walked concurrently by a small worker pool (bounded by the host's available
+  parallelism) instead of one at a time. Concurrency is governed by an AIMD
+  (additive-increase/multiplicative-decrease) limiter: it ramps up gradually
+  on sustained success and immediately halves the moment Azure signals
+  throttling (HTTP 429 / `Retry-After`), then retries the throttled call with
+  jittered backoff honoring any `Retry-After` value. Output ordering is
+  unaffected by which worker finishes first: the map graph is always
+  assembled in the same, deterministic order regardless of run-to-run timing.
 
 ## Configuration
 

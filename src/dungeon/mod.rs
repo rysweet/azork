@@ -8,6 +8,9 @@
 //!
 //! * [`map`] — the serializable map graph (rooms/resources/edges) and the
 //!   read-only, budgeted enumeration that builds it from an [`crate::az_runner::AzRunner`].
+//! * [`concurrency`] — the dependency-free adaptive (AIMD) concurrency
+//!   limiter and throttle detector shared by [`map`]'s parallel enumeration
+//!   and [`crate::backend::az`]'s retry loop.
 //! * [`icons`] — the single Azure resource type -> icon lookup table.
 //! * [`icon_assets`] — the compile-time-embedded original SVG icon bodies
 //!   each icon key resolves to (see `assets/azure-icons/LICENSE-NOTICE.md`).
@@ -27,6 +30,7 @@
 
 pub mod cli;
 pub mod commands;
+pub mod concurrency;
 pub mod decorations;
 pub mod icon_assets;
 pub mod icons;
