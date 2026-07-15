@@ -124,6 +124,75 @@ fn readme_does_not_feature_oit_as_user_facing_section() {
     }
 }
 
+/// Requirement: the "## Example session" section (a concrete demo of playing
+/// AzZork) must appear near the top of the README, immediately after the
+/// intro and before the "## The metaphor" section, so new readers see a
+/// real example before any conceptual material.
+#[test]
+fn readme_example_session_appears_before_the_metaphor() {
+    let readme = read_readme();
+    let lines: Vec<&str> = readme.lines().collect();
+
+    let example_idx = lines
+        .iter()
+        .position(|l| l.trim() == "## Example session")
+        .expect("README.md must contain a top-level '## Example session' section");
+
+    let metaphor_idx = lines
+        .iter()
+        .position(|l| l.trim() == "## The metaphor")
+        .expect("README.md must contain a top-level '## The metaphor' section");
+
+    assert!(
+        example_idx < metaphor_idx,
+        "'## Example session' (line {}) must appear before '## The metaphor' (line {}) \
+         so new readers see a concrete example right after the intro",
+        example_idx + 1,
+        metaphor_idx + 1
+    );
+
+    // It should be one of the first top-level sections encountered (i.e. sit
+    // right after the intro), not merely "somewhere before" a later section.
+    let first_h2_idx = lines
+        .iter()
+        .position(|l| l.trim_start().starts_with("## "))
+        .expect("README.md must contain at least one top-level section");
+    assert_eq!(
+        example_idx, first_h2_idx,
+        "'## Example session' must be the first top-level section after the intro"
+    );
+}
+
+/// The "### Getting eaten by a Grue" subsection must remain nested directly
+/// beneath "## Example session" after the section move (verbatim content,
+/// no orphaning of the subsection at its old location).
+#[test]
+fn readme_grue_subsection_is_nested_under_example_session() {
+    let readme = read_readme();
+    let lines: Vec<&str> = readme.lines().collect();
+
+    let example_idx = lines
+        .iter()
+        .position(|l| l.trim() == "## Example session")
+        .expect("README.md must contain '## Example session'");
+
+    let grue_idx = lines
+        .iter()
+        .position(|l| l.trim() == "### Getting eaten by a Grue")
+        .expect("README.md must contain '### Getting eaten by a Grue'");
+
+    let next_h2_idx = lines[example_idx + 1..]
+        .iter()
+        .position(|l| l.trim_start().starts_with("## ") && !l.trim_start().starts_with("### "))
+        .map(|i| i + example_idx + 1)
+        .unwrap_or(lines.len());
+
+    assert!(
+        grue_idx > example_idx && grue_idx < next_h2_idx,
+        "'### Getting eaten by a Grue' must be nested within '## Example session'"
+    );
+}
+
 /// Requirement 3 (continued): the underlying OIT code and artifacts must
 /// still exist — we're only removing the *user-facing marketing*, not the
 /// tool itself.
