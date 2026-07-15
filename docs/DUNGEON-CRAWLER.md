@@ -7,8 +7,9 @@ Where the classic AzZork REPL (see the [Usage guide](USAGE.md)) plays out one
 resource group at a time as a text adventure, Dungeon Crawler Mode steps back
 and draws the **whole subscription at once** as a real dungeon map: every
 resource group is a **walled, rectilinear room** (not a node in a graph),
-every resource inside it is rendered with its **official-style Azure
-architecture icon**, and rooms are joined by **corridors with doors** where
+every resource inside it is rendered with **Microsoft's official Azure
+architecture icon** for its resource type, and rooms are joined by
+**corridors with doors** where
 they share a region or a network relationship. The whole thing is drawn on a
 parchment-and-grid background in the style of classic tabletop dungeon maps.
 It is read-only, fully offline by default, and safe to point at a real
