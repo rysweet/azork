@@ -11,7 +11,7 @@ use crate::dungeon::validate;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -286,9 +286,13 @@ fn deterministic_position(name: &str, region: &str) -> (i32, i32) {
 /// Rooms are first bucketed by region so only rooms within the same
 /// region are ever compared, avoiding an all-pairs scan across the
 /// entire subscription (which would be quadratic in total room count
-/// even when regions are small and numerous).
+/// even when regions are small and numerous). A `BTreeMap` (ordered by
+/// region name) is used instead of a `HashMap` so the resulting edge
+/// order stays deterministic across runs — the same subscription must
+/// always produce the same map, and `HashMap` iteration order is
+/// randomized per-process.
 fn same_region_edges(rooms: &[Room]) -> Vec<Edge> {
-    let mut by_region: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut by_region: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (idx, room) in rooms.iter().enumerate() {
         by_region.entry(room.region.as_str()).or_default().push(idx);
     }
