@@ -330,6 +330,16 @@ Agentic resolution of unknown/ambiguous intent — AzZork never dead-ends.
 - **`enum Resolution`** — `Verb` | `Suggestions` | `Unresolved`, each with
   `narrate()`.
 - **`IntentResolver<A: Adapter>`** — ties an adapter to a registry; never fails.
+- **`fn truncate_intent(raw: &str) -> String`** — char-boundary-safe cap
+  (`MAX_INTENT_ECHO_LEN = 200`) applied to raw free-text intent input before it
+  is ever echoed to the terminal or persisted. Inputs at or under the cap are
+  returned unchanged (as an owned `String`); inputs over the cap are sliced
+  on a valid UTF-8 character boundary (never mid-codepoint, so multi-byte
+  input such as emoji or non-Latin scripts can never panic) and suffixed with
+  `"...(truncated)"`. `Resolution::Unresolved::narrate()` calls this helper
+  internally, so an unbounded paste at the `az>` prompt can never flood the
+  terminal or grow `memory.graph` unbounded — see the `memory` module below
+  for the persistence side of the same cap.
 
 The embedded [`agent_engine`](../src/agent_engine/mod.rs) module's
 `AzorkAdapter` implements a *different* trait — `recipe-runner-rs`'s own
@@ -349,6 +359,16 @@ Dependency-free persistent graph memory, accumulated across sessions.
   `XDG_DATA_HOME`, mirroring the capability cache).
 - Recalled at startup (banner shows `[memory: recalled N remembered nodes]`) and
   updated as the game and OIT agent play.
+- **Unresolved-intent friction nodes are size-bounded.** When free-text input
+  matches no built-in verb and the `agent::IntentResolver` cannot confidently
+  resolve it either, the raw input is recorded as a `friction` node — but only
+  after passing through `agent::truncate_intent()` (200-character cap,
+  `"...(truncated)"` suffix on overflow). This is applied at the
+  `GraphMemory::record_friction` call site in `main.rs`, so a single
+  arbitrarily long paste at the `az>` prompt (e.g. thousands of characters)
+  can add at most one bounded-size node to `memory.graph`, keeping the file's
+  growth proportional to the number of distinct unresolved intents rather than
+  their raw length.
 
 The optional [`memory-store`](../memory-store/README.md) companion crate's
 `PersistentStore` mirrors every `GraphMemory` node **and edge** into a durable,

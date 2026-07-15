@@ -174,3 +174,13 @@ launch so the game accumulates knowledge over time. The cache location is:
 The cache holds only public `az` command names and their one-line help summaries
 — no credentials, subscription data, or resource contents. Delete the file to
 reset AzZork's learned capabilities.
+
+Graph memory (`memory.graph`, alongside `capabilities.tsv` in the same
+`AZORK_CACHE_DIR`/`XDG_DATA_HOME`-resolved directory) accumulates `room`,
+`object`, `verb`, `intent`, and `friction` nodes across sessions. Unresolved
+free-text input is one source of `friction` nodes; to keep the file from
+growing unbounded when a player pastes a very long, unrecognized line at the
+`az>` prompt, any such input is capped at 200 characters (with a
+`"...(truncated)"` suffix on overflow) before it is echoed back to the
+terminal or written to `memory.graph`. The cap is fixed and not currently
+configurable via an environment variable.

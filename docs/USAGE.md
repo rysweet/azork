@@ -287,7 +287,13 @@ Discovered az capabilities (learned at runtime):
   command group. `capabilities` (aliases `caps`, `powers`, `spells`) lists them.
 - **Intent resolution.** Any input that matches no built-in verb is not rejected
   outright: AzZork ranks your words against its learned capabilities and either
-  acts on a confident match or offers a "did you mean…" list.
+  acts on a confident match or offers a "did you mean…" list. If neither
+  applies, the input is recorded as an "unresolved intent" friction note (see
+  `memory`, below) so it can be reviewed later — free-text input longer than
+  200 characters is truncated (with a trailing `...(truncated)`) both in the
+  terminal echo and in what gets written to `memory.graph`, so pasting a very
+  long unrecognized line can never flood your terminal or bloat the memory
+  file.
 
 ## Outside-in-testing (OIT) agent
 
