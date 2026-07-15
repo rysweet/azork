@@ -194,12 +194,47 @@ fn is_secret_key(key: &str) -> bool {
 }
 
 /// Redact `Bearer <token>` authorization header values.
+///
+/// The `bearer ` match must start on a word boundary: the byte immediately
+/// preceding it (if any) must not be an ASCII alphanumeric character.
+/// Without this check, any unrelated word that merely *contains* "bearer"
+/// as a substring (e.g. an Azure resource named `torchBearer`) would be
+/// mistaken for the start of an `Authorization: Bearer <token>` header, and
+/// the "token" would then be computed by scanning forward to the next
+/// whitespace character -- which, in markup with no whitespace between
+/// tags (e.g. `</title><rect ...`), can span across and swallow unrelated
+/// tag delimiters entirely unrelated to the resource name. See GitHub
+/// issue #34.
 fn redact_bearer_tokens(line: &str) -> String {
     const PREFIX: &str = "Bearer ";
     let mut out = String::with_capacity(line.len());
+    // `idx` is the position up to which `line` has already been copied into
+    // `out` (either verbatim or as a redaction); `search_from` is where the
+    // next `find_ignore_case` scan resumes, which can be past `idx` when a
+    // candidate match is rejected as a false positive (a "bearer" that's
+    // actually the tail of a larger word) so we don't loop on it forever
+    // without losing the un-copied text in between.
     let mut idx = 0;
-    while let Some(rel) = find_ignore_case(&line[idx..], "bearer ") {
-        let start = idx + rel;
+    let mut search_from = 0;
+    while let Some(rel) = find_ignore_case(&line[search_from..], "bearer ") {
+        let start = search_from + rel;
+
+        // Reject matches that are actually the tail of a larger word (e.g.
+        // "torchBearer") rather than the start of a standalone "Bearer"
+        // token.
+        let preceded_by_word_char = line[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric());
+        if preceded_by_word_char {
+            // Not a real match at this position; resume searching just past
+            // it so we don't loop on the same spot forever. `idx` is left
+            // untouched so this rejected span is still copied verbatim into
+            // `out` later.
+            search_from = start + 1;
+            continue;
+        }
+
         out.push_str(&line[idx..start]);
         out.push_str(PREFIX);
         let tok_start = start + PREFIX.len();
@@ -209,6 +244,7 @@ fn redact_bearer_tokens(line: &str) -> String {
             .unwrap_or(line.len());
         out.push_str(REDACTED);
         idx = tok_end;
+        search_from = tok_end;
     }
     out.push_str(&line[idx..]);
     out
@@ -328,6 +364,39 @@ mod tests {
         let scrubbed = scrub(&line);
         assert!(!scrubbed.contains("NOTAREALTOKEN"));
         assert!(scrubbed.contains(REDACTED));
+    }
+
+    #[test]
+    fn does_not_corrupt_svg_markup_for_bearer_shaped_resource_name() {
+        // Regression test for GitHub issue #34: an Azure resource whose
+        // name merely *contains* "bearer" as a substring (e.g. an App
+        // Service named "torchBearer") was previously mistaken by
+        // `redact_bearer_tokens` for the start of an
+        // `Authorization: Bearer <token>` header. Because SVG markup has
+        // no whitespace between adjacent tags, the "token" scan (which
+        // runs to the next whitespace character) swallowed everything up
+        // to and including unrelated tag delimiters -- corrupting the
+        // document by eating the closing `</title>` tag and the opening
+        // `<rect` tag name, producing invalid SVG/HTML.
+        let svg = "<g class=\"resource\" data-resource-id=\"1\">\
+<title>torchBearer (Microsoft.Web/sites)</title>\
+<rect x=\"570\" y=\"1574\" width=\"20\" height=\"20\" rx=\"3\" class=\"icon icon-app-service\"/>\
+<text x=\"572\" y=\"1588\" class=\"icon-label\">AS</text></g>";
+
+        let scrubbed = scrub(svg);
+
+        // The resource name itself contains no real secret, so scrubbing
+        // must be a no-op here -- the whole document must survive intact,
+        // tag-for-tag.
+        assert_eq!(scrubbed, svg);
+
+        // Explicit structural assertions in case the exact-equality check
+        // above is ever loosened: tag boundaries and the resource-type
+        // label must remain fully intact.
+        assert!(scrubbed.contains("</title>"));
+        assert!(scrubbed.contains("<rect x=\"570\""));
+        assert!(scrubbed.contains("class=\"icon icon-app-service\""));
+        assert!(!scrubbed.contains(REDACTED));
     }
 
     #[test]
