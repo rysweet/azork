@@ -27,8 +27,35 @@ use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The tenant the mission authorises the agent to operate against.
-const EXPECTED_SUBSCRIPTION: &str = "9b00bc5e-9abc-45de-9958-02a9d9277b16";
-const EXPECTED_TENANT_NAME: &str = "DefenderATEVET17";
+///
+/// These are the maintainer's *non-secret* test-tenant identifiers, used as
+/// defaults so the agent works out-of-the-box for the maintainer. Anyone else
+/// can point the agent at their own account by exporting `AZORK_OIT_SUBSCRIPTION`
+/// (a subscription id) and/or `AZORK_OIT_TENANT` (a display name); the preflight
+/// ownership check then enforces *their* expected account instead.
+const DEFAULT_EXPECTED_SUBSCRIPTION: &str = "9b00bc5e-9abc-45de-9958-02a9d9277b16";
+const DEFAULT_EXPECTED_TENANT_NAME: &str = "DefenderATEVET17";
+
+/// The subscription id the agent is authorised to operate against
+/// (`AZORK_OIT_SUBSCRIPTION` override, else the maintainer default).
+fn expected_subscription() -> String {
+    env_or("AZORK_OIT_SUBSCRIPTION", DEFAULT_EXPECTED_SUBSCRIPTION)
+}
+
+/// The tenant display name the agent expects (`AZORK_OIT_TENANT` override, else
+/// the maintainer default).
+fn expected_tenant_name() -> String {
+    env_or("AZORK_OIT_TENANT", DEFAULT_EXPECTED_TENANT_NAME)
+}
+
+/// Read a non-empty env var, falling back to `default`.
+fn env_or(var: &str, default: &str) -> String {
+    std::env::var(var)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| default.to_string())
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -66,7 +93,7 @@ fn main() {
         }
     } else {
         data.subscription = "(dry-run: no live subscription)".to_string();
-        data.tenant_name = EXPECTED_TENANT_NAME.to_string();
+        data.tenant_name = expected_tenant_name();
     }
 
     // ---- Live: create a few cheap, tagged, isolated resources ----------
@@ -216,9 +243,11 @@ fn preflight() -> Result<(String, String), String> {
         .unwrap_or_default()
         .trim()
         .to_string();
-    if sub != EXPECTED_SUBSCRIPTION {
+    let expected = expected_subscription();
+    if sub != expected {
         return Err(format!(
-            "active subscription {sub} != expected {EXPECTED_SUBSCRIPTION}"
+            "active subscription {sub} != expected {expected} \
+             (set AZORK_OIT_SUBSCRIPTION to authorise a different account)"
         ));
     }
     println!("preflight ok: subscription {sub} ({name})");
@@ -226,6 +255,13 @@ fn preflight() -> Result<(String, String), String> {
 }
 
 /// Create a resource group with the canonical OIT tags, after a cost check.
+///
+/// The cost gate ([`assess_cost`]) here bounds the *static cheap catalog*
+/// ([`CheapResource`]) the agent is allowed to create — every create in this
+/// binary draws its estimate from that curated catalog, so the gate can only
+/// approve known-cheap kinds. If the catalog is ever extended with pricier
+/// resources, feed a real (e.g. retail-price API) estimate into `assess_cost`
+/// so the `$500` cap remains a genuine runtime bound rather than a static one.
 fn create_resource_group(name: &str, ttl: u64) -> Result<(), String> {
     let est = CheapResource::ResourceGroup.est_monthly_usd();
     if !assess_cost(est).is_approved() {
@@ -408,8 +444,14 @@ fn drive_azork(bin: &Path, scratch: &Path, backend: &str, script: &[String]) -> 
         Ok(c) => c,
         Err(e) => return format!("(could not launch azork: {e})"),
     };
+    // Write the whole script on a dedicated thread so a child that fills its
+    // stdout pipe before consuming all of stdin cannot deadlock us (we would
+    // otherwise be blocked writing stdin while it blocks writing stdout).
     if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(input.as_bytes());
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(input.as_bytes());
+            // Dropping `stdin` here closes the pipe, signalling EOF to the child.
+        });
     }
     match child.wait_with_output() {
         Ok(out) => String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -450,34 +492,84 @@ fn az_capture(args: &[&str]) -> Result<String, String> {
     az_run(args)
 }
 
-/// Parse `az ... --query tags -o json` output into a tag map. Dependency-free:
-/// a tiny scanner good enough for the flat `{"k":"v",...}` az emits.
+/// Parse `az ... --query tags -o json` output into a tag map. Dependency-free
+/// (this crate ships zero runtime dependencies) but **quote-aware**: it splits
+/// pairs and key/value only on *top-level* commas and colons — those outside a
+/// double-quoted string — and understands backslash escapes. That makes it
+/// robust to tag values that themselves contain `,`, `:`, or escaped quotes,
+/// which a naive `split(',')`/`split(':')` would mangle. `az` emits a flat
+/// `{"k":"v",...}` string→string object, so nested structures are not expected.
 fn parse_tags_json(json: &str) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
-    let body = json.trim().trim_start_matches('{').trim_end_matches('}');
-    if body.trim().is_empty() || json.trim() == "null" {
+    let trimmed = json.trim();
+    if trimmed == "null" || trimmed.is_empty() {
         return map;
     }
-    for pair in split_top_level(body) {
-        if let Some((k, v)) = pair.split_once(':') {
-            let key = unquote(k);
-            let val = unquote(v);
-            if !key.is_empty() {
-                map.insert(key, val);
-            }
+    let body = trimmed
+        .strip_prefix('{')
+        .and_then(|s| s.strip_suffix('}'))
+        .unwrap_or(trimmed);
+    if body.trim().is_empty() {
+        return map;
+    }
+    for pair in split_top_level(body, ',') {
+        // Split on the first *top-level* colon so `:` inside a quoted value stays.
+        let mut kv = split_top_level(&pair, ':');
+        if kv.len() < 2 {
+            continue;
+        }
+        let key = unquote(&kv.remove(0));
+        // Re-join any remaining segments in case the value contained a colon
+        // that (defensively) slipped through as a top-level split.
+        let val = unquote(&kv.join(":"));
+        if !key.is_empty() {
+            map.insert(key, val);
         }
     }
     map
 }
 
-/// Split a flat JSON object body on top-level commas (no nesting expected).
-fn split_top_level(body: &str) -> Vec<String> {
-    body.split(',').map(|s| s.trim().to_string()).collect()
+/// Split `body` on top-level occurrences of `sep` — delimiters inside a
+/// double-quoted string (honouring `\` escapes) are not treated as separators.
+fn split_top_level(body: &str, sep: char) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut cur = String::new();
+    let mut in_str = false;
+    let mut escaped = false;
+    for c in body.chars() {
+        if escaped {
+            cur.push(c);
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' if in_str => {
+                cur.push(c);
+                escaped = true;
+            }
+            '"' => {
+                in_str = !in_str;
+                cur.push(c);
+            }
+            _ if c == sep && !in_str => {
+                parts.push(std::mem::take(&mut cur));
+            }
+            _ => cur.push(c),
+        }
+    }
+    parts.push(cur);
+    parts
 }
 
-/// Strip surrounding quotes/whitespace from a JSON scalar.
+/// Strip surrounding quotes/whitespace from a JSON scalar and unescape the
+/// common `\"` and `\\` sequences.
 fn unquote(s: &str) -> String {
-    s.trim().trim_matches('"').trim().to_string()
+    let t = s.trim();
+    let inner = t
+        .strip_prefix('"')
+        .and_then(|x| x.strip_suffix('"'))
+        .unwrap_or(t);
+    inner.replace("\\\"", "\"").replace("\\\\", "\\")
 }
 
 /// Value following a flag in argv, if present.
@@ -513,6 +605,24 @@ mod tests {
     fn parse_tags_json_handles_null_and_empty() {
         assert!(parse_tags_json("null").is_empty());
         assert!(parse_tags_json("{}").is_empty());
+    }
+
+    #[test]
+    fn parse_tags_json_is_quote_aware() {
+        // A tag value containing a comma and a colon must not be split apart.
+        let json = r#"{"owner": "azork-oit", "note": "a,b:c", "azork-oit": "1"}"#;
+        let tags = parse_tags_json(json);
+        assert_eq!(tags.get("owner").unwrap(), "azork-oit");
+        assert_eq!(tags.get("note").unwrap(), "a,b:c");
+        assert_eq!(tags.get("azork-oit").unwrap(), "1");
+        assert!(guardrails::is_own_resource(&tags));
+    }
+
+    #[test]
+    fn parse_tags_json_unescapes_quotes() {
+        let json = r#"{"desc": "say \"hi\""}"#;
+        let tags = parse_tags_json(json);
+        assert_eq!(tags.get("desc").unwrap(), r#"say "hi""#);
     }
 
     #[test]
