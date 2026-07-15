@@ -68,12 +68,20 @@ Pressing Ctrl-D (EOF) at any prompt ends the session gracefully.
 | `help` | `?`, `h` | Show the in-game command list (including learned capabilities). | — |
 | `quit` | `q`, `exit` | Leave the dungeon (prints your final score). | — |
 
-Unrecognized input returns a friendly hint rather than crashing:
+Unrecognized input never crashes and never dead-ends. Instead it is routed
+through AzZork's [intent resolver](#self-evolution-learn-and-capabilities), which
+tries to match your words against what it has learned. With nothing learned yet,
+you get a nudge toward `learn` and `help`:
 
 ```
 az> frobnicate the vm
-I don't understand "frobnicate the vm". Type 'help' for commands.
+The incantation "frobnicate the vm" stirs nothing yet. Try 'learn <group>' to
+discover new powers, or 'help'.
 ```
+
+Once AzZork has learned some `az` capabilities, the same input yields a confident
+match or a "did you mean…" list instead — see
+[Self-evolution](#self-evolution-learn-and-capabilities) below.
 
 ### Directions
 
