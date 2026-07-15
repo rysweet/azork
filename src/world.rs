@@ -246,6 +246,11 @@ impl World {
             .expect("current room always exists")
     }
 
+    /// Number of rooms (resource groups) in the world.
+    pub fn rooms_len(&self) -> usize {
+        self.rooms.len()
+    }
+
     fn current_room_mut(&mut self) -> &mut Room {
         self.rooms
             .get_mut(&self.current)
