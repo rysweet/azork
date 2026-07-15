@@ -104,18 +104,21 @@ line-based persistence, zero deps). A `persistent` Cargo feature reserves the se
 for the native `lbug`-backed `amplihack-memory` store; it never links into the
 default build so `cargo build`/`cargo test` stay light and green.
 
-## Agentic intent resolution (optional `agentic` feature)
+## Agentic intent resolution (optional companion crate)
 
-Enabling `--features agentic` bridges AzZork into the MIT-licensed
-[`recipe-runner-rs`] engine — the same way Simard and Powderfinger embed it.
-AzZork implements the runner's `Adapter` trait (`AzorkAdapter`): *agent* steps
-resolve intent against the learned registry (deterministic, offline), *bash* steps
-delegate to the runner's CLI subprocess adapter so a recipe can shell out to `az`.
-The feature pulls heavier edition-2024 dependencies, so it is opt-in and never
-links into the default offline build. See [`src/agent/recipe.rs`].
+The [`agentic-bridge/`](agentic-bridge/) companion crate bridges AzZork into the
+MIT-licensed [`recipe-runner-rs`] engine — the same way Simard and Powderfinger
+embed it. It implements the runner's `Adapter` trait (`AzorkAdapter`): *agent*
+steps resolve intent against the learned registry (deterministic, offline), *bash*
+steps delegate to the runner's CLI subprocess adapter so a recipe can shell out to
+`az`. `run_intent_recipe` runs an inline amplihack recipe with AzZork as the agent.
+
+It lives in a **separate crate on purpose**: azork itself stays zero-dependency, so
+`cargo build`/`cargo test` at the repo root remain light, offline, and green on a
+fresh clone. Building the bridge is opt-in and requires the reference repos checked
+out side-by-side — see [`agentic-bridge/README.md`](agentic-bridge/README.md).
 
 [`recipe-runner-rs`]: https://crates.io/crates/recipe-runner-rs
-[`src/agent/recipe.rs`]: src/agent/recipe.rs
 
 ## Install
 
@@ -299,8 +302,7 @@ src/
 │   ├── derive.rs      parse `az --help` / `az <group> --help` into capabilities
 │   └── registry.rs    CapabilityRegistry: lookup, suggestions, help text, on-disk cache
 ├── agent/
-│   ├── mod.rs         IntentResolver + Adapter trait + offline MockAdapter
-│   └── recipe.rs      optional recipe-runner-rs bridge (feature = "agentic")
+│   └── mod.rs         IntentResolver + Adapter trait + offline MockAdapter
 ├── memory/
 │   └── mod.rs         GraphMemory: ladybug-style persistent graph memory
 ├── oit/               outside-in-testing agent (guardrails, use cases, report)
@@ -331,19 +333,21 @@ external `tests/` suite.
 
 The **default** build remains **dependency-free** (standard library only), so the
 core game, self-evolution, and graph memory add no license obligations. Two
-optional, feature-gated integrations pull external crates only when explicitly
-enabled:
+optional integrations pull external crates only when explicitly built:
 
-- **`agentic`** → the MIT-licensed [`recipe-runner-rs`] agentic `Adapter` engine
-  (and its transitive deps). Opt-in via `cargo build --features agentic`.
-- **`persistent`** → reserves the seam for the MIT-licensed `amplihack-memory`
-  (native `lbug` ladybug graph) store.
+- **`agentic-bridge/`** (separate companion crate) → the MIT-licensed
+  [`recipe-runner-rs`] agentic `Adapter` engine (and its transitive deps). Kept
+  out of the azork package so the default build stays zero-dep.
+- **`persistent`** feature → reserves the seam for the MIT-licensed
+  `amplihack-memory` (native `lbug` ladybug graph) store.
 
 Both are MIT-compatible with this project's MIT license and neither links into the
 default `cargo build`/`cargo test`, which stay light and offline.
 
 The Azure CLI extension under [`azext/`](azext/) is pure Python with **zero**
 third-party `install_requires` (it uses only the Azure CLI's own SDK).
+
+[`recipe-runner-rs`]: https://crates.io/crates/recipe-runner-rs
 
 
 ## Development
@@ -354,8 +358,8 @@ cargo test       # run the unit test suite (parser + world model + backends + me
 cargo run        # play with the offline mock backend
 cargo clippy --all-targets   # lints (CI enforces -D warnings)
 
-cargo build --features agentic       # opt-in recipe-runner-rs integration
 cargo build --bin azork-oit          # the live outside-in-testing agent
+(cd agentic-bridge && cargo test)    # opt-in recipe-runner-rs companion crate
 ```
 
 ## Documentation

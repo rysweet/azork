@@ -1,20 +1,24 @@
-//! Feature-gated `recipe-runner-rs` integration (`agentic`).
+//! Optional companion crate: bridges AzZork into the [`recipe-runner-rs`] agentic
+//! engine.
 //!
-//! This is the *live* counterpart to the offline [`MockAdapter`]. It embeds the
-//! [`recipe-runner-rs`](https://crates.io/crates/recipe-runner-rs) engine the same
-//! way Simard and Powderfinger do: azork implements the runner's [`Adapter`]
-//! trait, then hands it to `run_recipe`, letting an amplihack recipe orchestrate
-//! multi-step intent resolution (agent steps + bash steps) around azork's own
-//! learned [`CapabilityRegistry`].
+//! This is the *live* counterpart to AzZork's offline `MockAdapter`. It embeds the
+//! [`recipe-runner-rs`] engine the same way Simard and Powderfinger do: it
+//! implements the runner's [`Adapter`](recipe_runner_rs::adapters::Adapter) trait,
+//! then hands it to `run_recipe`, letting an amplihack recipe orchestrate
+//! multi-step intent resolution (agent steps + bash steps) around AzZork's own
+//! learned [`CapabilityRegistry`](azork::capabilities::CapabilityRegistry).
 //!
 //! The bridge is deterministic where it can be: an *agent step* resolves its
-//! prompt against the learned registry via the offline resolver (no LLM, no
+//! prompt against the learned registry via AzZork's offline resolver (no LLM, no
 //! network), while *bash steps* are delegated to the runner's standard CLI
 //! subprocess adapter so recipes can still shell out to `az` for real work.
 //!
-//! Because it pulls edition-2024, heavier dependencies, the whole module is
-//! gated behind the `agentic` Cargo feature and never links into the default
-//! offline build.
+//! It lives in a **separate crate** on purpose, so that azork's own
+//! `cargo build`/`cargo test` remain zero-dependency, offline, and green on a
+//! fresh clone. Building this bridge is opt-in and requires the reference repos to
+//! be checked out side-by-side.
+//!
+//! [`recipe-runner-rs`]: https://crates.io/crates/recipe-runner-rs
 
 use std::collections::HashMap;
 
@@ -23,13 +27,13 @@ use recipe_runner_rs::adapters::Adapter as RecipeAdapter;
 use recipe_runner_rs::models::RecipeResult;
 use recipe_runner_rs::run_recipe;
 
-use crate::agent::{Adapter, MockAdapter};
-use crate::capabilities::CapabilityRegistry;
+use azork::agent::{Adapter, MockAdapter};
+use azork::capabilities::CapabilityRegistry;
 
-/// Bridges azork into the `recipe-runner-rs` [`Adapter`] seam.
+/// Bridges AzZork into the `recipe-runner-rs` [`RecipeAdapter`] seam.
 ///
-/// * Agent steps → resolve the prompt against learned capabilities using the
-///   deterministic offline resolver (so the default agentic path stays
+/// * Agent steps → resolve the prompt against learned capabilities using
+///   AzZork's deterministic offline resolver (so the default agentic path stays
 ///   reproducible and network-free).
 /// * Bash steps → delegate to the runner's [`CLISubprocessAdapter`], letting a
 ///   recipe shell out (e.g. to `az`) when it genuinely needs to.
@@ -61,7 +65,7 @@ impl RecipeAdapter for AzorkAdapter {
         _model: Option<&str>,
         _timeout: Option<u64>,
     ) -> Result<String, anyhow::Error> {
-        // Resolve the intent against what azork has learned so far. This is the
+        // Resolve the intent against what AzZork has learned so far. This is the
         // offline, deterministic resolution the game uses at the prompt — surfaced
         // here so a recipe can compose it with other steps.
         Ok(self.resolver.resolve(prompt, &self.registry).narrate())
@@ -87,7 +91,7 @@ impl RecipeAdapter for AzorkAdapter {
     }
 }
 
-/// Run an inline amplihack recipe with azork as the adapter.
+/// Run an inline amplihack recipe with AzZork as the adapter.
 ///
 /// `dry_run` executes the recipe's control flow without invoking real bash
 /// commands, which keeps tests hermetic. Returns the runner's structured
@@ -100,10 +104,8 @@ pub fn run_intent_recipe(
     run_recipe(yaml, AzorkAdapter::new(registry), None, dry_run).map_err(|e| e.to_string())
 }
 
-/// A minimal built-in recipe that resolves a free-text intent into an azork
-/// narration via a single agent step. Callers substitute `{{ intent }}` through
-/// the recipe context, but the default embeds a placeholder so it parses
-/// stand-alone.
+/// A minimal built-in recipe that resolves a free-text intent into an AzZork
+/// narration via a single agent step.
 pub const INTENT_RESOLUTION_RECIPE: &str = r#"
 name: azork-intent-resolution
 description: Resolve an ambiguous azork intent against learned az capabilities.
@@ -117,7 +119,7 @@ steps:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capabilities::Capability;
+    use azork::capabilities::Capability;
 
     fn registry() -> CapabilityRegistry {
         let mut reg = CapabilityRegistry::new();
@@ -134,15 +136,7 @@ mod tests {
     fn adapter_agent_step_resolves_via_registry() {
         let a = AzorkAdapter::new(registry());
         let out = a
-            .execute_agent_step(
-                "create a storage account",
-                None,
-                None,
-                None,
-                ".",
-                None,
-                None,
-            )
+            .execute_agent_step("create a storage account", None, None, None, ".", None, None)
             .expect("agent step");
         assert!(!out.is_empty());
     }

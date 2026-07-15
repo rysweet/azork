@@ -14,10 +14,6 @@
 
 use crate::capabilities::{Capability, CapabilityRegistry};
 
-/// Feature-gated `recipe-runner-rs` integration (agentic intent resolution).
-#[cfg(feature = "agentic")]
-pub mod recipe;
-
 /// The outcome of trying to resolve an ambiguous / unknown player intent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolution {
