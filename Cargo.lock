@@ -729,6 +729,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 [[package]]
 name = "recipe-runner-rs"
 version = "0.3.6"
+source = "git+https://github.com/rysweet/amplihack-recipe-runner?rev=90b91f941d0b7487c7bb1d92eca0a4140a630706#90b91f941d0b7487c7bb1d92eca0a4140a630706"
 dependencies = [
  "anyhow",
  "clap",

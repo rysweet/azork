@@ -105,25 +105,28 @@ library is available as an **opt-in companion crate**,
 [`memory-store/`](memory-store/): it mirrors the whole graph (nodes **and** edges)
 into an `amplihack-memory` store, reloads it faithfully across sessions, and offers
 full-text ranked recall through the library's own search engine. Unlike the
-embedded `agent_engine` module (below), it is kept out of the azork package so
+`agent_engine` module (below), it is kept out of the azork package so
 the default build never links a native dependency — see
 [`memory-store/README.md`](memory-store/README.md).
 
-## Agentic intent resolution (embedded)
+## Agentic intent resolution
 
-The [`src/agent_engine/`](src/agent_engine/) module embeds AzZork into the
-MIT-licensed [`recipe-runner-rs`] engine. It implements the runner's `Adapter` trait (`AzorkAdapter`): *agent*
-steps resolve intent against the learned registry (deterministic, offline), *bash*
-steps delegate to the runner's CLI subprocess adapter so a recipe can shell out to
-`az`. `run_intent_recipe` runs an inline amplihack recipe with AzZork as the agent.
+The [`src/agent_engine/`](src/agent_engine/) module depends on and drives the
+MIT-licensed [`recipe-runner-rs`] engine — it does not embed AzZork into the
+runner, it implements the runner's `Adapter` trait (`AzorkAdapter`) so AzZork
+can act as the agent the runner calls: *agent* steps resolve intent against
+the learned registry (deterministic, offline at runtime), *bash* steps
+delegate to the runner's CLI subprocess adapter so a recipe can shell out to
+`az`. `run_intent_recipe` hands an inline amplihack recipe to the runner with
+AzZork as the agent.
 
-It is part of the **main azork crate**: `recipe-runner-rs` is vendored offline
-under [`vendor/recipe-runner-rs/`](vendor/recipe-runner-rs/) and depended on
-directly via a `path` dependency, so `cargo build`/`cargo test` at the repo root
-compile and exercise this capability **by default** — no separate crate to build,
-no reference repos to check out side-by-side, and no network access required.
+It is part of the **main azork crate**: `recipe-runner-rs` is a normal git
+dependency, pinned to a specific upstream commit for reproducibility, so
+`cargo build`/`cargo test` at the repo root compile and exercise this
+capability **by default** — no separate crate to build and no reference repos
+to check out side-by-side.
 
-[`recipe-runner-rs`]: vendor/recipe-runner-rs/
+[`recipe-runner-rs`]: https://github.com/rysweet/amplihack-recipe-runner
 
 ## Install
 

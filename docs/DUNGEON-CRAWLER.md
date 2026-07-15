@@ -138,7 +138,7 @@ type (e.g. `Microsoft.Storage/storageAccounts`, `Microsoft.Compute/virtualMachin
 a type → icon registry.
 
 - Where licensing allows, the registry prefers the official Azure architecture
-  icon set (SVG). Where it doesn't (offline run, no network, or the vendored
+  icon set (SVG). Where it doesn't (offline run, no network, or the bundled
   set doesn't cover a type), it falls back to a curated, redistributable
   SVG/emoji icon so the map **always renders fully offline** — no icon is ever
   silently skipped.

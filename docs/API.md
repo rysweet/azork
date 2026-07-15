@@ -46,12 +46,12 @@ src/
                         timeout/zombie-process/pipe-deadlock hardening)
 ```
 
-The [`src/agent_engine/`](../src/agent_engine/mod.rs) module is embedded in the
+The [`src/agent_engine/`](../src/agent_engine/mod.rs) module is part of the
 main crate: it connects AzZork's `CapabilityRegistry` into the
 `recipe-runner-rs` agentic engine via an `AzorkAdapter`, compiled and tested by
 default `cargo build`/`cargo test` (no `[workspace]` table needed — it depends
-on a vendored, offline `path` dependency, see
-[`vendor/recipe-runner-rs/`](../vendor/recipe-runner-rs/)).
+on a normal git dependency pinned to a specific commit, see
+[`recipe-runner-rs`]).
 
 One **optional companion crate** lives alongside the root package but is never
 compiled by `cargo build`/`cargo test` at the repo root (no `[workspace]` table,
@@ -84,14 +84,14 @@ and never touch the real CLI or network.
 
 The core game, self-evolution, and graph memory add no license obligations
 beyond the small set of dependencies in the main `Cargo.toml`. The default
-build also embeds one agentic integration and keeps one durable-storage
+build also drives one agentic integration and keeps one durable-storage
 integration opt-in:
 
-- **`src/agent_engine/`** (embedded module, main crate) → the MIT-licensed
+- **`src/agent_engine/`** (module, main crate) → drives the MIT-licensed
   [`recipe-runner-rs`] agentic `Adapter` engine (and its transitive deps),
-  vendored offline under [`vendor/recipe-runner-rs/`](../vendor/recipe-runner-rs/)
-  and depended on via a `path` dependency. Compiled and tested by default
-  `cargo build`/`cargo test` — no opt-in step required.
+  depended on via a normal git dependency pinned to a specific commit.
+  Compiled and tested by default `cargo build`/`cargo test` — no opt-in step
+  required.
 - **`memory-store/`** (separate companion crate) → durable graph memory over the
   MIT-licensed `amplihack-memory` library (SQLite-backed, `lbug`-capable). Kept
   out of the azork package so the default build stays zero-dep for that
@@ -103,7 +103,7 @@ into the default `cargo build`/`cargo test`; `memory-store` does not.
 The Azure CLI extension under [`azext/`](../azext/) is pure Python with **zero**
 third-party `install_requires` (it uses only the Azure CLI's own SDK).
 
-[`recipe-runner-rs`]: ../vendor/recipe-runner-rs/
+[`recipe-runner-rs`]: https://github.com/rysweet/amplihack-recipe-runner
 
 ## `parser` module
 
@@ -467,14 +467,13 @@ credentials. Similarly, no test in `tests/` or `src/` invokes the live
 `azork-oit` binary against a real subscription — its guardrails and friction
 heuristics are exercised entirely through the pure `oit` module's unit tests.
 
-### Embedded agentic tests (run by default `cargo test` at the repo root)
+### Agentic tests (run by default `cargo test` at the repo root)
 
 - `src/agent_engine/mod.rs` unit tests — `AzorkAdapter` intent resolution
   against a `CapabilityRegistry`, and `run_intent_recipe` executing
-  `INTENT_RESOLUTION_RECIPE` end-to-end via the vendored, offline
-  `recipe-runner-rs` dependency (see
-  [`vendor/recipe-runner-rs/`](../vendor/recipe-runner-rs/)) — no sibling
-  checkout or network access required.
+  `INTENT_RESOLUTION_RECIPE` end-to-end via the `recipe-runner-rs` git
+  dependency (see [`recipe-runner-rs`]) — no sibling checkout required. Intent
+  resolution itself is deterministic and network-free at runtime.
 
 ### Companion-crate tests (opt-in, not run by `cargo test` at the repo root)
 
