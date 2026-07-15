@@ -11,6 +11,9 @@
 //! * [`icons`] — the single Azure resource type -> icon lookup table.
 //! * [`icon_assets`] — the compile-time-embedded original SVG icon bodies
 //!   each icon key resolves to (see `assets/azure-icons/LICENSE-NOTICE.md`).
+//! * [`decorations`] — purely-decorative, margin-confined border/torch/chest/
+//!   dragon dressing, placed with no risk of colliding with rooms or
+//!   corridors.
 //! * [`commands`] — the (same-table-derived) type -> suggested read-only `az`
 //!   command lookup.
 //! * [`links`] — Azure portal deep-link construction from a resource ID.
@@ -24,6 +27,7 @@
 
 pub mod cli;
 pub mod commands;
+pub mod decorations;
 pub mod icon_assets;
 pub mod icons;
 pub mod links;

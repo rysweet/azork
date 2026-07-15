@@ -11,10 +11,69 @@
 //! for the tabletop-dungeon-map styling this renderer targets and why it is
 //! self-designed rather than driving a third-party map tool.
 
+use crate::dungeon::decorations;
 use crate::dungeon::icon_assets;
 use crate::dungeon::map::{DungeonMap, Room};
 use crate::secrets::scrub;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
+
+/// Fixed icon size (px). Rooms grow to fit their resource count rather than
+/// icons shrinking to fit a fixed room, so every icon always renders at a
+/// legible, consistent size regardless of how many resources share a room.
+const ICON_SIZE: i32 = 20;
+/// Gap (px) between adjacent icons within a room's icon grid.
+const ICON_GAP: i32 = 6;
+/// Wall stroke thickness (px), matched to the `.room-wall` stroke-width.
+const WALL: i32 = 4;
+/// Left/right/bottom padding (px) inside a room's walls around its icon
+/// grid.
+const ROOM_PADDING: i32 = 8;
+/// Vertical space (px) reserved at the top of a room for its label, above
+/// the icon grid.
+const ROOM_HEADER: i32 = 30;
+/// Smallest room footprint (px) regardless of resource count, so a room
+/// with zero or few resources still reads as a proper dungeon chamber
+/// rather than a cramped sliver.
+const ROOM_MIN_SIZE: i32 = 116;
+/// Fixed gap (px) added around the single largest room's footprint to
+/// derive the uniform grid cell spacing (see [`grid_cell_size`]). Kept
+/// generous enough that corridors have visible open space alongside walls
+/// even when the largest room in the map is much bigger than
+/// [`ROOM_MIN_SIZE`].
+const CORRIDOR_GAP: i32 = 80;
+
+/// A room's rendered pixel footprint, computed purely from its resource
+/// count so it can never silently overflow (unlike a fixed-size room with
+/// an unbounded icon grid).
+struct RoomLayout {
+    width: i32,
+    height: i32,
+    cols: i32,
+}
+
+/// Compute the icon grid shape and pixel footprint for a room holding
+/// `resource_count` resources. The grid is as close to square as possible
+/// (`cols = ceil(sqrt(n))`), and the resulting width/height are clamped to
+/// [`ROOM_MIN_SIZE`] so small rooms keep their original, familiar size.
+fn room_layout(resource_count: usize) -> RoomLayout {
+    let n = resource_count.max(1) as i32;
+    let cols = (n as f64).sqrt().ceil() as i32;
+    let cols = cols.max(1);
+    let rows = ((n + cols - 1) / cols).max(1);
+
+    let content_w = cols * ICON_SIZE + (cols - 1).max(0) * ICON_GAP;
+    let content_h = rows * ICON_SIZE + (rows - 1).max(0) * ICON_GAP;
+
+    let width = (WALL * 2 + ROOM_PADDING * 2 + content_w).max(ROOM_MIN_SIZE);
+    let height = (WALL * 2 + ROOM_HEADER + ROOM_PADDING + content_h).max(ROOM_MIN_SIZE);
+
+    RoomLayout {
+        width,
+        height,
+        cols,
+    }
+}
 
 /// Render `map` to a self-contained HTML document.
 ///
@@ -23,11 +82,6 @@ use std::collections::{HashMap, HashSet};
 /// HTML/SVG-escaped in the output so a hostile name can never inject markup
 /// or script into the page.
 pub fn render_html(map: &DungeonMap) -> String {
-    const CELL: i32 = 150;
-    const ROOM_SIZE: i32 = 116;
-    const WALL: i32 = 4;
-    const ICON_SIZE: i32 = 20;
-
     // Rough per-room/per-edge output size estimates so the accumulator
     // strings grow once up front instead of reallocating/copying on every
     // push for subscriptions with hundreds of rooms or corridors.
@@ -51,27 +105,69 @@ pub fn render_html(map: &DungeonMap) -> String {
         rooms_by_id.insert(room.id.as_str(), room);
     }
 
+    // Every room's own footprint is a pure function of its resource count,
+    // computed once up front (and reused below for both icon placement and
+    // corridor endpoints) rather than assuming a shared fixed size.
+    let mut layouts: HashMap<&str, RoomLayout> = HashMap::with_capacity(map.rooms.len());
+    let mut max_room_dim = ROOM_MIN_SIZE;
+    for room in &map.rooms {
+        let layout = room_layout(room.resources.len());
+        max_room_dim = max_room_dim.max(layout.width).max(layout.height);
+        layouts.insert(room.id.as_str(), layout);
+    }
+
+    // A single uniform grid cell, sized off the *largest* room's footprint
+    // plus a fixed gap, guarantees no room/corridor can ever collide no
+    // matter how large one room's icon grid grows relative to its
+    // neighbors (unlike a fixed cell size, which silently overflows once a
+    // room exceeds it).
+    let cell = max_room_dim + CORRIDOR_GAP;
+
     for room in &map.rooms {
         room_max_x = room_max_x.max(room.x);
         room_max_y = room_max_y.max(room.y);
-        let px = room.x * CELL;
-        let py = room.y * CELL;
+        let px = room.x * cell + decorations::MAP_MARGIN;
+        let py = room.y * cell + decorations::MAP_MARGIN;
+        let layout = &layouts[room.id.as_str()];
 
-        let mut resource_icons = String::new();
+        // Write each room's markup directly into the shared accumulator
+        // buffers (via `write!`) instead of building an intermediate
+        // `String` per room/resource with `format!` and then copying it in
+        // with `push_str` — same output and paint order (floor, wall, label,
+        // then icons on top), one fewer allocation-and-copy per resource and
+        // per room.
+        let _ = write!(
+            svg_rooms,
+            "<g class=\"room\" data-room-id=\"{id}\">\
+             <rect x=\"{px}\" y=\"{py}\" width=\"{w}\" height=\"{h}\" rx=\"3\" class=\"room-floor\"/>\
+             <rect x=\"{px}\" y=\"{py}\" width=\"{w}\" height=\"{h}\" rx=\"3\" class=\"room-wall\"/>\
+             <text x=\"{tx}\" y=\"{ty}\" class=\"room-label\">{name}</text>",
+            id = escape_html(&scrub(&room.id)),
+            px = px,
+            py = py,
+            w = layout.width,
+            h = layout.height,
+            tx = px + 8,
+            ty = py + 18,
+            name = escape_html(&scrub(&room.name)),
+        );
+
         for (i, res) in room.resources.iter().enumerate() {
             let key = icon_assets::canonical_key(&res.icon);
             if defined_icons.insert(key) {
-                svg_icon_defs.push_str(&format!(
+                let _ = write!(
+                    svg_icon_defs,
                     "<symbol id=\"icon-{key}\" viewBox=\"{view_box}\">{inner}</symbol>",
                     key = key,
                     view_box = icon_assets::view_box(key),
                     inner = icon_assets::inner_markup(key),
-                ));
+                );
             }
 
-            let ix = px + WALL + 8 + (i as i32 % 4) * (ICON_SIZE + 6);
-            let iy = py + WALL + 30 + (i as i32 / 4) * (ICON_SIZE + 6);
-            resource_icons.push_str(&format!(
+            let ix = px + WALL + ROOM_PADDING + (i as i32 % layout.cols) * (ICON_SIZE + ICON_GAP);
+            let iy = py + WALL + ROOM_HEADER + (i as i32 / layout.cols) * (ICON_SIZE + ICON_GAP);
+            let _ = write!(
+                svg_rooms,
                 "<g class=\"resource\" data-resource-id=\"{id}\">\
                  <title>{name} ({kind})</title>\
                  <use href=\"#icon-{key}\" x=\"{ix}\" y=\"{iy}\" width=\"{size}\" height=\"{size}\" \
@@ -83,28 +179,10 @@ pub fn render_html(map: &DungeonMap) -> String {
                 ix = ix,
                 iy = iy,
                 size = ICON_SIZE,
-            ));
+            );
         }
 
-        // A "walled chamber": an outer wall stroke plus a slightly inset
-        // floor fill, evoking a hand-drawn dungeon room rather than a flat
-        // node-graph box.
-        svg_rooms.push_str(&format!(
-            "<g class=\"room\" data-room-id=\"{id}\">\
-             <rect x=\"{px}\" y=\"{py}\" width=\"{w}\" height=\"{h}\" rx=\"3\" class=\"room-floor\"/>\
-             <rect x=\"{px}\" y=\"{py}\" width=\"{w}\" height=\"{h}\" rx=\"3\" class=\"room-wall\"/>\
-             <text x=\"{tx}\" y=\"{ty}\" class=\"room-label\">{name}</text>\
-             {icons}</g>",
-            id = escape_html(&scrub(&room.id)),
-            px = px,
-            py = py,
-            w = ROOM_SIZE,
-            h = ROOM_SIZE,
-            tx = px + 8,
-            ty = py + 18,
-            name = escape_html(&scrub(&room.name)),
-            icons = resource_icons,
-        ));
+        svg_rooms.push_str("</g>");
     }
 
     for edge in &map.edges {
@@ -112,18 +190,30 @@ pub fn render_html(map: &DungeonMap) -> String {
             rooms_by_id.get(edge.from.as_str()),
             rooms_by_id.get(edge.to.as_str()),
         ) {
-            svg_corridors.push_str(&corridor_path(
-                a.x * CELL,
-                a.y * CELL,
-                b.x * CELL,
-                b.y * CELL,
-                ROOM_SIZE,
-            ));
+            let a_layout = &layouts[a.id.as_str()];
+            let b_layout = &layouts[b.id.as_str()];
+            corridor_path(
+                &mut svg_corridors,
+                a.x * cell + decorations::MAP_MARGIN,
+                a.y * cell + decorations::MAP_MARGIN,
+                a_layout.width,
+                a_layout.height,
+                b.x * cell + decorations::MAP_MARGIN,
+                b.y * cell + decorations::MAP_MARGIN,
+                b_layout.width,
+                b_layout.height,
+            );
         }
     }
 
-    let width = (room_max_x + 1) * CELL + 40;
-    let height = (room_max_y + 1) * CELL + 40;
+    let width = (room_max_x + 1) * cell + decorations::MAP_MARGIN * 2;
+    let height = (room_max_y + 1) * cell + decorations::MAP_MARGIN * 2;
+    let svg_decorations = decorations::build(
+        width,
+        height,
+        &icon_assets::inner_markup("mystery-chest"),
+        &icon_assets::view_box("mystery-chest"),
+    );
 
     let partial_banner = if map.partial {
         "<div class=\"partial-banner\">⚠ Partial map — enumeration was cancelled or incomplete; not every room in the subscription is shown.</div>"
@@ -151,6 +241,11 @@ pub fn render_html(map: &DungeonMap) -> String {
   .corridor-fill {{ fill: none; stroke: #d8c896; stroke-width: 6; stroke-linecap: square; }}
   .door {{ fill: #6b4226; stroke: #2a1c10; stroke-width: 1; }}
   .icon {{ color: #3a2c18; }}
+  .decoration {{ pointer-events: none; }}
+  .map-border-outer {{ fill: none; stroke: #4a3418; stroke-width: 4; }}
+  .map-border-inner {{ fill: none; stroke: #4a3418; stroke-width: 1; }}
+  .torch-post {{ fill: #4a3418; }}
+  .torch-flame {{ fill: #e8912b; stroke: #a9520a; stroke-width: 1; }}
   #detail {{ margin-top: 12px; padding: 10px; border: 2px solid #4a3418; display: none; background: #1c1712; color: #e8dcc4; }}
   #detail a {{ color: #9fd3ff; }}
   #detail code {{ display: block; background: #0c0a08; padding: 4px; margin: 2px 0; }}
@@ -170,6 +265,7 @@ pub fn render_html(map: &DungeonMap) -> String {
 <rect x="0" y="0" width="{width}" height="{height}" fill="url(#grid)"/>
 {corridors}
 {rooms}
+{decorations}
 </svg>
 <div id="detail"></div>
 <script>
@@ -214,6 +310,7 @@ pub fn render_html(map: &DungeonMap) -> String {
         icon_defs = svg_icon_defs,
         corridors = svg_corridors,
         rooms = svg_rooms,
+        decorations = svg_decorations,
     );
     scrub(&html)
 }
@@ -222,49 +319,61 @@ pub fn render_html(map: &DungeonMap) -> String {
 /// walls, plus a `<door>` marker at each end where the corridor meets the
 /// room — the "L-shaped hallway with doors" look of a classic tabletop
 /// dungeon map, replacing a bare diagonal `<line>` between room centers.
-fn corridor_path(ax: i32, ay: i32, bx: i32, by: i32, room_size: i32) -> String {
-    let a_cx = ax + room_size / 2;
-    let a_cy = ay + room_size / 2;
-    let b_cx = bx + room_size / 2;
-    let b_cy = by + room_size / 2;
+/// Each room's own computed width/height is used (rather than a shared
+/// constant), so a corridor always meets a room's *actual* wall regardless
+/// of how that room's adaptive size differs from its neighbor's. Writes
+/// directly into `out` (the caller's accumulator buffer) rather than
+/// building and returning an intermediate `String`, avoiding an
+/// allocation-and-copy per edge.
+#[allow(clippy::too_many_arguments)]
+fn corridor_path(
+    out: &mut String,
+    ax: i32,
+    ay: i32,
+    a_w: i32,
+    a_h: i32,
+    bx: i32,
+    by: i32,
+    b_w: i32,
+    b_h: i32,
+) {
+    let a_cx = ax + a_w / 2;
+    let a_cy = ay + a_h / 2;
+    let b_cx = bx + b_w / 2;
+    let b_cy = by + b_h / 2;
 
     // Exit A's wall on the side facing B, and enter B's wall on the side
     // facing A, then join the two points with one right-angle bend.
     let (exit_x, exit_y) = if b_cx >= a_cx {
-        (ax + room_size, a_cy)
+        (ax + a_w, a_cy)
     } else {
         (ax, a_cy)
     };
     let (entry_x, entry_y) = if a_cx >= b_cx {
-        (bx + room_size, b_cy)
+        (bx + b_w, b_cy)
     } else {
         (bx, b_cy)
     };
     let mid_x = (exit_x + entry_x) / 2;
 
-    let path = format!(
+    // Path (both stroke and fill layers), then door glyphs at each end,
+    // all written directly into `out`.
+    let _ = write!(
+        out,
         "<path class=\"corridor\" d=\"M {ex} {ey} L {mx} {ey} L {mx} {fy} L {fx} {fy}\"/>\
-         <path class=\"corridor-fill\" d=\"M {ex} {ey} L {mx} {ey} L {mx} {fy} L {fx} {fy}\"/>",
+         <path class=\"corridor-fill\" d=\"M {ex} {ey} L {mx} {ey} L {mx} {fy} L {fx} {fy}\"/>\
+         <rect x=\"{ax}\" y=\"{ay}\" width=\"6\" height=\"12\" class=\"door\"/>\
+         <rect x=\"{bx}\" y=\"{by}\" width=\"6\" height=\"12\" class=\"door\"/>",
         ex = exit_x,
         ey = exit_y,
         mx = mid_x,
         fy = entry_y,
         fx = entry_x,
+        ax = exit_x - 3,
+        ay = exit_y - 6,
+        bx = entry_x - 3,
+        by = entry_y - 6,
     );
-
-    // Door glyphs: small filled rects straddling each wall opening.
-    let door_a = format!(
-        "<rect x=\"{x}\" y=\"{y}\" width=\"6\" height=\"12\" class=\"door\"/>",
-        x = exit_x - 3,
-        y = exit_y - 6
-    );
-    let door_b = format!(
-        "<rect x=\"{x}\" y=\"{y}\" width=\"6\" height=\"12\" class=\"door\"/>",
-        x = entry_x - 3,
-        y = entry_y - 6
-    );
-
-    format!("{path}{door_a}{door_b}")
 }
 
 /// Escape a string for safe inclusion in HTML/SVG text content or

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+<!-- Original, simple geometric dragon-head silhouette (not an Azure architecture icon) used purely as decorative tabletop-map dressing. -->
+<path d="M4 30 C6 20 12 10 22 8 C26 7 30 8 33 11 L30 12 C31 14 33 15 36 15 L32 18 C33 20 32 22 30 23 L28 20 C24 24 18 25 13 23 C9 22 6 26 4 30 Z" class="dragon-body" fill="#6b1f1f" stroke="#2a0d0d" stroke-width="1"/>
+<circle cx="27" cy="13" r="1.4" class="dragon-eye" fill="#f2c94c"/>
+<path d="M20 9 L22 4 L24 9 Z" class="dragon-horn" fill="#4a1414"/>
+<path d="M15 24 C12 27 10 31 9 34" class="dragon-tail" fill="none" stroke="#6b1f1f" stroke-width="2" stroke-linecap="round"/>
+</svg>
