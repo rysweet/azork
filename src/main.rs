@@ -4,7 +4,7 @@
 //! required). Pass `--backend az` (or set `AZORK_BACKEND=az`) to explore your
 //! real subscription via the `az` CLI.
 
-use azork::agent::{IntentResolver, MockAdapter};
+use azork::agent::{truncate_intent, IntentResolver, MockAdapter};
 use azork::az_runner::{AzRunner, FakeAzRunner, ProcessAzRunner};
 use azork::backend;
 use azork::capabilities::{registry::default_cache_path, CapabilityRegistry};
@@ -337,7 +337,7 @@ where
             // An input AzZork could not resolve is friction worth remembering.
             if matches!(resolution, azork::agent::Resolution::Unresolved(_)) {
                 memory.record_friction(
-                    &format!("unresolved intent: {}", raw.trim()),
+                    &format!("unresolved intent: {}", truncate_intent(raw.trim())),
                     &["intent", "unresolved"],
                 );
             }
@@ -669,6 +669,7 @@ fn demo_runner() -> FakeAzRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use azork::agent::MAX_INTENT_ECHO_LEN;
     use azork::backend::{mock::MockBackend, Backend};
 
     #[test]
@@ -695,5 +696,46 @@ mod tests {
     fn confirm_defaults_no_on_eof() {
         let mut it: std::vec::IntoIter<io::Result<String>> = vec![].into_iter();
         assert!(!confirm("go?", &mut it));
+    }
+
+    /// A very long, unrecognised line of input must not be persisted verbatim
+    /// as an "unresolved intent" friction node — regression test for #32
+    /// (unbounded growth of memory.graph from a single long line).
+    #[test]
+    fn long_unresolved_intent_is_truncated_before_persisting() {
+        let mut world = MockBackend::new().build_world().unwrap();
+        let mut registry = CapabilityRegistry::new();
+        let mut memory = GraphMemory::new();
+        let runner = FakeAzRunner::new();
+        let cache_path = Path::new("/tmp/azork-test-cache-unused");
+        let mut lines: std::vec::IntoIter<io::Result<String>> = vec![].into_iter();
+
+        // Nonsense input, well past the truncation cap, with no recognisable
+        // az domain keyword so it resolves as `Unresolved` rather than a
+        // `LearnHint`.
+        let long_input = "qzxjk ".repeat(400); // ~2400 chars, no known keywords
+        assert!(long_input.len() > MAX_INTENT_ECHO_LEN * 2);
+
+        let quit = handle(
+            &mut world,
+            Command::Unknown(long_input.clone()),
+            &mut lines,
+            &mut registry,
+            &mut memory,
+            &runner,
+            cache_path,
+        );
+        assert!(!quit);
+
+        let friction_nodes = memory.nodes_of_kind(MemoryKind::Friction);
+        assert_eq!(friction_nodes.len(), 1);
+        let content = &friction_nodes[0].content;
+        // Persisted content must be capped, not the full ~2400-char input.
+        assert!(
+            content.len() < long_input.len(),
+            "expected persisted friction note to be truncated, got {} chars",
+            content.len()
+        );
+        assert!(content.contains("...(truncated)"));
     }
 }

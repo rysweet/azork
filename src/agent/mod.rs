@@ -13,6 +13,24 @@
 
 use crate::capabilities::{Capability, CapabilityRegistry};
 
+/// Maximum length (in characters) of free-text input echoed back to the
+/// player or persisted verbatim as an "unresolved intent" friction/memory
+/// note. Without a cap, a single very long line of unrecognised input would
+/// be echoed to the terminal in full and grow the on-disk memory graph
+/// unbounded (see issue #32).
+pub const MAX_INTENT_ECHO_LEN: usize = 200;
+
+/// Truncate `s` to at most [`MAX_INTENT_ECHO_LEN`] characters, appending an
+/// `...(truncated)` indicator when truncation actually occurred. Safe on
+/// multi-byte input: truncation happens on a `char` boundary.
+pub fn truncate_intent(s: &str) -> String {
+    if s.chars().count() <= MAX_INTENT_ECHO_LEN {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(MAX_INTENT_ECHO_LEN).collect();
+    format!("{head}...(truncated)")
+}
+
 /// The outcome of trying to resolve an ambiguous / unknown player intent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolution {
@@ -102,7 +120,7 @@ impl Adapter for MockAdapter {
                     raw: input.to_string(),
                     group,
                 },
-                None => Resolution::Unresolved(input.to_string()),
+                None => Resolution::Unresolved(truncate_intent(input)),
             },
             [only] => Resolution::Verb((*only).clone()),
             [first, second, ..] => {
@@ -213,6 +231,46 @@ mod tests {
         let r = IntentResolver::new(MockAdapter::new(), &reg);
         // "frobnicate" names no known az domain, so it stays unresolved.
         assert!(matches!(r.resolve("frobnicate"), Resolution::Unresolved(_)));
+    }
+
+    #[test]
+    fn truncate_intent_leaves_short_input_untouched() {
+        let s = "frobnicate";
+        assert_eq!(truncate_intent(s), s);
+    }
+
+    #[test]
+    fn truncate_intent_caps_long_input_with_indicator() {
+        let long = "a".repeat(1000);
+        let capped = truncate_intent(&long);
+        assert!(capped.len() < long.len());
+        assert!(capped.ends_with("...(truncated)"));
+        assert_eq!(
+            capped.chars().count(),
+            MAX_INTENT_ECHO_LEN + "...(truncated)".chars().count()
+        );
+    }
+
+    #[test]
+    fn very_long_unresolved_input_is_truncated_in_resolution_and_narration() {
+        let reg = CapabilityRegistry::new();
+        let r = IntentResolver::new(MockAdapter::new(), &reg);
+        // No recognisable keyword, so this stays Unresolved; far past the cap.
+        let long_input = "qzxjk ".repeat(400);
+
+        let resolution = r.resolve(&long_input);
+        match &resolution {
+            Resolution::Unresolved(raw) => {
+                assert!(raw.len() < long_input.len());
+                assert!(raw.ends_with("...(truncated)"));
+            }
+            other => panic!("expected Unresolved, got {:?}", other),
+        }
+
+        // The terminal-facing narration must also be bounded, since it embeds
+        // the (already truncated) raw input.
+        let narration = resolution.narrate();
+        assert!(narration.len() < long_input.len());
     }
 
     #[test]
