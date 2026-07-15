@@ -34,6 +34,7 @@ fn dispatch(world: &mut World, line: &str) -> String {
         Command::Recall(q) => format!("recall: {q}"),
         Command::Memory => "memory".to_string(),
         Command::Help => "help".to_string(),
+        Command::Version => "version".to_string(),
         Command::Quit => "quit".to_string(),
         Command::Unknown(raw) => format!("unknown: {raw}"),
     }

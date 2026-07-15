@@ -267,6 +267,10 @@ where
         Command::Recall(query) => println!("{}", recall_report(memory, &query)),
         Command::Memory => println!("{}", memory.summary()),
         Command::Help => println!("{}", help_text(registry)),
+        Command::Version => println!(
+            "AzZork v{} — the Azure control plane as a text adventure.",
+            env!("CARGO_PKG_VERSION")
+        ),
         Command::Quit => {
             println!("\nYou step back through the portal.\n{}", world.score());
             return true;

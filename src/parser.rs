@@ -85,6 +85,8 @@ pub enum Command {
     Memory,
     /// Show help.
     Help,
+    /// Print the AzZork version banner.
+    Version,
     /// Leave the game.
     Quit,
     /// Player entered nothing.
@@ -202,6 +204,7 @@ pub fn parse(input: &str) -> Command {
         }
         "memory" | "mem" | "recollect" => Command::Memory,
         "help" | "?" | "h" => Command::Help,
+        "version" | "ver" => Command::Version,
         "quit" | "q" | "exit" => Command::Quit,
         _ => Command::Unknown(input.to_string()),
     }
