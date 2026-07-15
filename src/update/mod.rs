@@ -199,12 +199,18 @@ pub fn is_newer(current: &Version, candidate: &Version) -> bool {
 /// The Rust target triple this binary supports self-updating for, if any.
 ///
 /// Only platforms with published release assets return `Some`. Additional
-/// triples can be added here as the release matrix grows.
+/// triples can be added here as the release matrix grows. Must stay in sync
+/// with the matrix in `.github/workflows/release.yml` and the OS/arch
+/// mapping in `install.sh`.
 pub fn supported_release_target() -> Option<&'static str> {
     if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
         Some("x86_64-unknown-linux-gnu")
     } else if cfg!(target_os = "linux") && cfg!(target_arch = "aarch64") {
         Some("aarch64-unknown-linux-gnu")
+    } else if cfg!(target_os = "macos") && cfg!(target_arch = "x86_64") {
+        Some("x86_64-apple-darwin")
+    } else if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        Some("aarch64-apple-darwin")
     } else {
         None
     }

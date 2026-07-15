@@ -42,6 +42,13 @@ jobs:
       - name: Test
         run: cargo test --locked --verbose
 
+      - name: Validate install.sh (syntax, shellcheck, unit + e2e tests)
+        run: |
+          sh -n install.sh
+          shellcheck -s sh install.sh tests/install_sh_test.sh tests/install_sh_e2e_test.sh
+          sh tests/install_sh_test.sh
+          sh tests/install_sh_e2e_test.sh
+
       # Coverage is REPORTED, not gated — printing the number keeps it visible
       # without blocking unrelated concurrent PRs on a hard threshold.
       - name: Install cargo-llvm-cov
