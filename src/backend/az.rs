@@ -26,6 +26,14 @@ const BASE_BACKOFF: Duration = Duration::from_millis(400);
 const AZ_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// How often to poll a running `az` child process for completion.
 const AZ_POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// Upper bound on how long to wait for the stdout/stderr reader threads to
+/// finish once the child has exited (or been killed on timeout). This is a
+/// safety net, not the expected path: if `az` spawned a grandchild that
+/// inherited the piped file descriptors and is still holding them open,
+/// `read_to_end` would otherwise block forever. Bounding it here guarantees
+/// `run_once` always returns within a predictable wall-clock budget, at the
+/// cost of leaking the (now-orphaned) reader thread in that rare case.
+const AZ_READER_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Backend that queries the real Azure control plane via `az`.
 pub struct AzBackend;
@@ -62,6 +70,7 @@ impl AzBackend {
     /// Perform a single `az` invocation. Returns `(message, retryable)` on error.
     fn run_once(&self, args: &[&str]) -> Result<String, (String, bool)> {
         use std::io::Read;
+        use std::sync::mpsc;
 
         let mut child = Command::new("az")
             .args(args)
@@ -78,57 +87,78 @@ impl AzBackend {
                 )
             })?;
 
-        // Drain stdout/stderr concurrently on background threads. The pipes'
-        // OS buffers are only ~64KB; `az resource list` on a busy
-        // subscription can easily exceed that, and without draining while we
-        // wait, the child would block inside its own write() the moment the
-        // buffer fills — `try_wait()` would then never observe an exit, and
-        // a slow-but-successful command would be misreported as a timeout.
+        // Drain stdout/stderr concurrently on background threads, handing
+        // each buffer back over a channel rather than joining the thread
+        // directly — that lets the caller bound how long it waits below
+        // (AZ_READER_JOIN_TIMEOUT) instead of risking an indefinite join if
+        // a grandchild process keeps the pipe open. OS pipe buffers are only
+        // ~64KB; `az resource list` on a busy subscription can easily exceed
+        // that, and without draining while we wait, the child would block
+        // inside its own write() the moment the buffer fills — `try_wait()`
+        // would then never observe an exit, and a slow-but-successful
+        // command would be misreported as a timeout.
         let mut stdout_pipe = child.stdout.take().expect("stdout was piped");
         let mut stderr_pipe = child.stderr.take().expect("stderr was piped");
-        let stdout_thread = std::thread::spawn(move || {
+        let (stdout_tx, stdout_rx) = mpsc::channel();
+        let (stderr_tx, stderr_rx) = mpsc::channel();
+        std::thread::spawn(move || {
             let mut buf = Vec::new();
             let _ = stdout_pipe.read_to_end(&mut buf);
-            buf
+            let _ = stdout_tx.send(buf);
         });
-        let stderr_thread = std::thread::spawn(move || {
+        std::thread::spawn(move || {
             let mut buf = Vec::new();
             let _ = stderr_pipe.read_to_end(&mut buf);
-            buf
+            let _ = stderr_tx.send(buf);
         });
 
+        // Single cleanup path for every exit from the poll loop (normal
+        // completion, timeout, or a try_wait() error): always attempt to
+        // kill+reap the child so no zombie process or leaked reader thread
+        // survives a failed/timed-out attempt, especially since these
+        // outcomes are retried by `run()`.
         let deadline = Instant::now() + AZ_CALL_TIMEOUT;
-        let status = loop {
+        let (status, timed_out) = loop {
             match child.try_wait() {
-                Ok(Some(status)) => break Some(status),
+                Ok(Some(status)) => break (Some(status), false),
                 Ok(None) => {
                     if Instant::now() >= deadline {
                         let _ = child.kill();
                         let _ = child.wait();
-                        break None;
+                        break (None, true);
                     }
                     sleep(AZ_POLL_INTERVAL);
                 }
-                Err(e) => {
-                    return Err((format!("failed to wait on 'az' process: {}", e), true));
+                Err(_e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break (None, false);
                 }
             }
         };
 
-        // Join the reader threads regardless of outcome: killing the child
-        // closes its end of the pipes, so `read_to_end` returns promptly.
-        let stdout = stdout_thread.join().unwrap_or_default();
-        let stderr = stderr_thread.join().unwrap_or_default();
+        let stdout = stdout_rx
+            .recv_timeout(AZ_READER_JOIN_TIMEOUT)
+            .unwrap_or_default();
+        let stderr = stderr_rx
+            .recv_timeout(AZ_READER_JOIN_TIMEOUT)
+            .unwrap_or_default();
 
+        if timed_out {
+            return Err((
+                format!(
+                    "'az {}' timed out after {}s (killed)",
+                    args.join(" "),
+                    AZ_CALL_TIMEOUT.as_secs()
+                ),
+                true,
+            ));
+        }
         let status = match status {
             Some(status) => status,
             None => {
                 return Err((
-                    format!(
-                        "'az {}' timed out after {}s (killed)",
-                        args.join(" "),
-                        AZ_CALL_TIMEOUT.as_secs()
-                    ),
+                    "failed to wait on 'az' process: process could not be reaped".to_string(),
                     true,
                 ));
             }
