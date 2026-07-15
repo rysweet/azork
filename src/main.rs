@@ -7,7 +7,7 @@
 use azork::agent::{truncate_intent, IntentResolver, MockAdapter};
 use azork::az_runner::{AzRunner, FakeAzRunner, ProcessAzRunner};
 use azork::backend;
-use azork::capabilities::{registry::default_cache_path, CapabilityRegistry};
+use azork::capabilities::{autodiscover, registry::default_cache_path, CapabilityRegistry};
 use azork::dungeon::{cli as dungeon_cli, map as dungeon_map, playwright, render, server};
 use azork::memory::{default_memory_path, GraphMemory, MemoryKind};
 use azork::parser::{self, Command};
@@ -15,6 +15,10 @@ use azork::update;
 use azork::world::{GrueOutcome, World};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver};
+use std::sync::Arc;
+use std::thread;
 
 const BANNER: &str = r#"
     ___    ______           __
@@ -49,7 +53,7 @@ const HELP: &str = r#"Commands (Zork verbs -> Azure operations):
   cast deploy [template]  cast a deployment spell (bicep/ARM, mock)
   inventory / i           list resources you are carrying
   score                   report your governance posture (0-100)
-  learn <group>           introspect 'az <group> --help' and grow AzZork's powers
+  learn <group>           manually refresh 'az <group> --help' (also auto-learned at startup)
   capabilities / caps     list the az capabilities AzZork has learned
   recall <query>          ranked recall over AzZork's persistent memory
   friction <note>         record something confusing/missing to improve later
@@ -59,8 +63,10 @@ const HELP: &str = r#"Commands (Zork verbs -> Azure operations):
   quit / q                leave the dungeon
 
 Beware: acting in a dark (unmonitored) room invites a Grue to eat you.
-AzZork evolves: unknown input is resolved against what it has learned, and
-'learn <group>' teaches it new az verbs that persist across sessions."#;
+AzZork evolves automatically: it discovers new az command groups at startup
+without being asked, resolves unknown input against what it has learned, and
+'learn <group>' remains available to manually refresh a group on demand —
+all of it persists across sessions."#;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -111,7 +117,9 @@ fn main() {
                  azork update          self-update to the latest release\n  \
                  azork --version       print the version\n\nEnvironment:\n  \
                  AZORK_BACKEND=az      use the live `az` CLI backend\n  \
+                 {}=0/false  disable automatic startup capability discovery\n  \
                  {}=1  disable the startup update check",
+                autodiscover::AUTODISCOVER_ENV,
                 update::NO_UPDATE_CHECK_ENV
             );
             return;
@@ -199,12 +207,34 @@ fn main() {
     // Live derivation runs through the real `az` CLI at runtime.
     let runner = ProcessAzRunner::new();
 
+    // Startup auto-discovery: proactively learn any `az` groups missing from
+    // the (just-recalled) cache, without the player typing `learn`. Runs on
+    // a background thread — computation only, no shared state — so it never
+    // blocks the first prompt; discovered capabilities stream in and are
+    // applied between turns. Disable via AZORK_AUTODISCOVER=0 for
+    // offline/CI contexts, or it degrades gracefully on its own if `az`
+    // isn't installed.
+    let discovery_cancel = Arc::new(AtomicBool::new(false));
+    let discovery_rx = if autodiscover::autodiscover_enabled() {
+        Some(spawn_autodiscovery(
+            registry.groups(),
+            discovery_cancel.clone(),
+        ))
+    } else {
+        None
+    };
+
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
 
     loop {
         if world.game_over {
             break;
+        }
+        // Fold in anything auto-discovery has learned since the last turn
+        // before showing the prompt, so the vocabulary keeps growing live.
+        if let Some(rx) = &discovery_rx {
+            drain_discovery(rx, &mut registry, &mut memory, &cache_path);
         }
         print!("\naz> ");
         io::stdout().flush().ok();
@@ -216,6 +246,11 @@ fn main() {
                 break;
             }
         };
+
+        // The player is now actively interacting: let any still-running
+        // startup discovery know it can stop enumerating further (not yet
+        // started) groups rather than compete for attention.
+        discovery_cancel.store(true, Ordering::Relaxed);
 
         // Every non-empty line is an intent AzZork has now seen.
         if !line.trim().is_empty() {
@@ -249,6 +284,69 @@ fn main() {
 
     if world.game_over {
         println!("\n{}", world.score());
+    }
+}
+
+/// Spawn the background startup-discovery thread and return the channel it
+/// streams [`autodiscover::GroupResult`]s over as it learns them.
+///
+/// This thread only *computes*: it owns its own [`ProcessAzRunner`] (a cheap
+/// `Copy` type) and a snapshot of the groups already known, and never
+/// touches the registry, memory, or cache directly — the main thread remains
+/// the sole owner of that state and applies results via [`drain_discovery`].
+fn spawn_autodiscovery(
+    known_groups: Vec<String>,
+    cancel: Arc<AtomicBool>,
+) -> Receiver<autodiscover::GroupResult> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let runner = ProcessAzRunner::new();
+        autodiscover::stream_startup_autodiscovery(&runner, &known_groups, &cancel, &tx);
+    });
+    rx
+}
+
+/// Drain any startup-discovery results that have arrived so far (without
+/// blocking), fold them into the registry and graph memory, persist the
+/// cache if anything new was learned, and let the player know.
+fn drain_discovery(
+    rx: &Receiver<autodiscover::GroupResult>,
+    registry: &mut CapabilityRegistry,
+    memory: &mut GraphMemory,
+    cache_path: &Path,
+) {
+    let mut learned_anything = false;
+    while let Ok(result) = rx.try_recv() {
+        for applied in autodiscover::apply_learned(registry, std::iter::once(result)) {
+            match applied.result {
+                Ok(added) if added > 0 => {
+                    learned_anything = true;
+                    for cap in registry.iter().filter(|c| c.group == applied.group) {
+                        memory.remember_capability(cap);
+                    }
+                    println!(
+                        "[autodiscover: learned {} new az power(s) from '{}'; {} known in total]",
+                        added,
+                        applied.group,
+                        registry.len()
+                    );
+                }
+                Ok(_) => {}
+                Err(_e) => {
+                    // Discovery failures (e.g. `az` unavailable/unauthenticated)
+                    // are expected offline/in CI and shouldn't spam the player;
+                    // startup already succeeded via cache + built-ins.
+                }
+            }
+        }
+    }
+    if learned_anything {
+        if let Err(e) = registry.save(cache_path) {
+            eprintln!(
+                "[autodiscover: warning — could not persist capabilities cache: {}]",
+                e
+            );
+        }
     }
 }
 
