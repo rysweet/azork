@@ -11,4 +11,13 @@ readme = "README.md"
 name = "azork"
 path = "src/main.rs"
 
+[features]
+# Default build is fully offline and dependency-free: the graph memory uses the
+# in-memory `GraphMemory` shim. `persistent` is the opt-in seam for the native
+# `lbug`-backed `amplihack-memory` store (wired in a later step); it deliberately
+# never links into the default build so `cargo build`/`cargo test` stay light,
+# offline, and green.
+default = []
+persistent = []
+
 [dependencies]
