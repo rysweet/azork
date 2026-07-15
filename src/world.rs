@@ -189,23 +189,30 @@ pub struct World {
 
 impl World {
     /// Build a world from a list of rooms and the starting room name.
-    pub fn new(rooms: Vec<Room>, start: &str, subscription: &str) -> World {
+    ///
+    /// Validates the room graph's integrity (start room exists, every exit
+    /// points at a known room) at runtime in both debug and release builds —
+    /// a corrupt graph produces a clear `Err` here instead of a panic later
+    /// from `current_room()`.
+    pub fn new(rooms: Vec<Room>, start: &str, subscription: &str) -> Result<World, String> {
         let mut map = HashMap::new();
         for r in rooms {
             map.insert(r.name.clone(), r);
         }
-        debug_assert!(
-            map.contains_key(start),
-            "start room '{}' does not exist",
-            start
-        );
-        debug_assert!(
-            map.values()
-                .flat_map(|room| room.exits.values())
-                .all(|dest| map.contains_key(dest)),
-            "a room exit points at a non-existent destination room"
-        );
-        World {
+        if !map.contains_key(start) {
+            return Err(format!("start room '{}' does not exist", start));
+        }
+        if let Some(dest) = map
+            .values()
+            .flat_map(|room| room.exits.values())
+            .find(|dest| !map.contains_key(dest.as_str()))
+        {
+            return Err(format!(
+                "a room exit points at a non-existent destination room '{}'",
+                dest
+            ));
+        }
+        Ok(World {
             rooms: map,
             current: start.to_string(),
             subscription: subscription.to_string(),
@@ -214,7 +221,7 @@ impl World {
             darkness_streak: 0,
             rng: 0x9E3779B97F4A7C15,
             game_over: false,
-        }
+        })
     }
 
     /// Seed the RNG deterministically (used by tests).
@@ -615,7 +622,7 @@ mod tests {
         });
         let dark =
             Room::new("dark-rg", "?", "westus", false).with_exit(Direction::South, "prod-rg");
-        World::new(vec![lit, dark], "prod-rg", "sub-mock-001")
+        World::new(vec![lit, dark], "prod-rg", "sub-mock-001").expect("valid test room graph")
     }
 
     #[test]
@@ -691,7 +698,7 @@ mod tests {
                 "Microsoft.Storage/storageAccounts",
                 "Primary account.",
             ));
-        let w = World::new(vec![room], "rg", "sub-mock-001");
+        let w = World::new(vec![room], "rg", "sub-mock-001").expect("valid test room graph");
         let idx = w.find_in_room("storage").expect("should resolve");
         assert_eq!(w.current_room().resources[idx].name, "storage");
         // A non-exact prefix query still resolves to the first prefix match.

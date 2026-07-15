@@ -7,8 +7,27 @@
 //! responses, so the suite never touches the real CLI or the network.
 
 use std::collections::HashMap;
-use std::io;
-use std::process::{Command, Output};
+use std::io::{self, ErrorKind, Read};
+use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
+use std::thread::sleep;
+use std::time::{Duration, Instant};
+
+/// Hard wall-clock timeout for a single `az` invocation. `az` can otherwise
+/// block indefinitely (e.g. an interactive device-code/browser login prompt,
+/// or a hung network call), which would freeze the whole game with no way
+/// out for the player.
+const AZ_CALL_TIMEOUT: Duration = Duration::from_secs(30);
+/// How often to poll a running `az` child process for completion.
+const AZ_POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// Upper bound on how long to wait for the stdout/stderr reader threads to
+/// finish once the child has exited (or been killed on timeout). This is a
+/// safety net, not the expected path: if `az` spawned a grandchild that
+/// inherited the piped file descriptors and is still holding them open,
+/// `read_to_end` would otherwise block forever. Bounding it here guarantees
+/// a call always returns within a predictable wall-clock budget, at the
+/// cost of leaking the (now-orphaned) reader thread in that rare case.
+const AZ_READER_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Something that can run an `az` invocation and return its raw process output.
 ///
@@ -19,11 +38,18 @@ pub trait AzRunner {
     ///
     /// Returning [`io::Result`] (rather than pre-interpreting success) keeps the
     /// seam dumb: retry/transient classification and stdout parsing live in the
-    /// callers, so a fake only has to hand back bytes.
+    /// callers, so a fake only has to hand back bytes. A timeout is reported as
+    /// an `io::Error` with [`io::ErrorKind::TimedOut`] so callers can treat it
+    /// as retryable without depending on message text.
     fn run(&self, args: &[&str]) -> io::Result<Output>;
 }
 
 /// Production runner: shells out to the real `az` binary on `PATH`.
+///
+/// This is the single hardened seam for launching `az`: every caller (the
+/// live [`crate::backend::az`] backend and [`crate::capabilities`]
+/// derivation) gets the same wall-clock timeout, zombie-process cleanup, and
+/// pipe-deadlock protection for free.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ProcessAzRunner;
 
@@ -35,7 +61,94 @@ impl ProcessAzRunner {
 
 impl AzRunner for ProcessAzRunner {
     fn run(&self, args: &[&str]) -> io::Result<Output> {
-        Command::new("az").args(args).output()
+        let mut child = Command::new("az")
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        // Drain stdout/stderr concurrently on background threads, handing
+        // each buffer back over a channel rather than joining the thread
+        // directly — that lets the caller bound how long it waits below
+        // (AZ_READER_JOIN_TIMEOUT) instead of risking an indefinite join if
+        // a grandchild process keeps the pipe open. OS pipe buffers are only
+        // ~64KB; `az resource list` on a busy subscription can easily exceed
+        // that, and without draining while we wait, the child would block
+        // inside its own write() the moment the buffer fills — `try_wait()`
+        // would then never observe an exit, and a slow-but-successful
+        // command would be misreported as a timeout.
+        let mut stdout_pipe = child.stdout.take().expect("stdout was piped");
+        let mut stderr_pipe = child.stderr.take().expect("stderr was piped");
+        let (stdout_tx, stdout_rx) = mpsc::channel();
+        let (stderr_tx, stderr_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stdout_pipe.read_to_end(&mut buf);
+            let _ = stdout_tx.send(buf);
+        });
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stderr_pipe.read_to_end(&mut buf);
+            let _ = stderr_tx.send(buf);
+        });
+
+        // Single cleanup path for every exit from the poll loop (normal
+        // completion, timeout, or a try_wait() error): always attempt to
+        // kill+reap the child so no zombie process or leaked reader thread
+        // survives a failed/timed-out attempt, especially since these
+        // outcomes are retried by the backend's `run()`.
+        let deadline = Instant::now() + AZ_CALL_TIMEOUT;
+        let (status, timed_out) = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break (Some(status), false),
+                Ok(None) => {
+                    if Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break (None, true);
+                    }
+                    sleep(AZ_POLL_INTERVAL);
+                }
+                Err(_e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break (None, false);
+                }
+            }
+        };
+
+        let stdout = stdout_rx
+            .recv_timeout(AZ_READER_JOIN_TIMEOUT)
+            .unwrap_or_default();
+        let stderr = stderr_rx
+            .recv_timeout(AZ_READER_JOIN_TIMEOUT)
+            .unwrap_or_default();
+
+        if timed_out {
+            return Err(io::Error::new(
+                ErrorKind::TimedOut,
+                format!(
+                    "'az {}' timed out after {}s (killed)",
+                    args.join(" "),
+                    AZ_CALL_TIMEOUT.as_secs()
+                ),
+            ));
+        }
+        let status = match status {
+            Some(status) => status,
+            None => {
+                return Err(io::Error::other(
+                    "failed to wait on 'az' process: process could not be reaped",
+                ));
+            }
+        };
+
+        Ok(Output {
+            status,
+            stdout,
+            stderr,
+        })
     }
 }
 

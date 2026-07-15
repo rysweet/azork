@@ -1,6 +1,6 @@
 [package]
 name = "azork"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "AzZork: the Azure control plane reimagined as a Zork-style text adventure."
 license = "MIT"
@@ -25,11 +25,10 @@ path = "src/main.rs"
 default = []
 
 [dependencies]
-# Dungeon Crawler Mode's only new dependencies: defensive, structural parsing of
-# untrusted `az ... -o json` output (never fragile line/regex parsing) and
-# serialization of the map graph for the embedded JSON API. Both are pinned to
-# an exact version; nothing else in the crate needs them, and the HTTP server
-# itself is hand-rolled on `std::net::TcpListener` (no web-framework
-# dependency) to keep the footprint minimal.
-serde = { version = "=1.0.219", features = ["derive"] }
-serde_json = "=1.0.140"
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+flate2 = "1"
+tar = "0.4"
+ureq = "2"

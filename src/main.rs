@@ -11,6 +11,7 @@ use azork::capabilities::{registry::default_cache_path, CapabilityRegistry};
 use azork::dungeon::{cli as dungeon_cli, map as dungeon_map, playwright, render, server};
 use azork::memory::{default_memory_path, GraphMemory, MemoryKind};
 use azork::parser::{self, Command};
+use azork::update;
 use azork::world::{GrueOutcome, World};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
@@ -62,10 +63,10 @@ AzZork evolves: unknown input is resolved against what it has learned, and
 'learn <group>' teaches it new az verbs that persist across sessions."#;
 
 fn main() {
-    let cli_args: Vec<String> = std::env::args().collect();
-    if let Some(first) = cli_args.get(1) {
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(first) = args.get(1) {
         if dungeon_cli::is_crawl_subcommand(first) {
-            let rest: Vec<String> = cli_args[2..].to_vec();
+            let rest: Vec<String> = args[2..].to_vec();
             match dungeon_cli::parse(&rest) {
                 Ok(crawl_args) => run_crawl(crawl_args),
                 Err(e) => {
@@ -75,6 +76,42 @@ fn main() {
             }
             return;
         }
+    }
+
+    // Top-level subcommands / flags handled before the game starts.
+    match args.get(1).map(String::as_str) {
+        Some("update") => {
+            let check_only = args.iter().any(|a| a == "--check");
+            std::process::exit(update::run_update_with(check_only));
+        }
+        Some("--version") | Some("-V") | Some("version") => {
+            println!("azork {}", azork::VERSION);
+            return;
+        }
+        Some("--help") | Some("-h") => {
+            println!("{}", BANNER);
+            println!("{}", HELP);
+            println!(
+                "\nSubcommands:\n  azork                 play the adventure (offline mock by default)\n  \
+                 azork crawl [flags]   render the Dungeon Crawler map (alias: dungeon)\n  \
+                 azork update          self-update to the latest release\n  \
+                 azork --version       print the version\n\nEnvironment:\n  \
+                 AZORK_BACKEND=az      use the live `az` CLI backend\n  \
+                 {}=1  disable the startup update check",
+                update::NO_UPDATE_CHECK_ENV
+            );
+            return;
+        }
+        _ => {}
+    }
+
+    // Optional, cached, subprocess-safe startup update check. Never hangs or
+    // prompts under CI / non-TTY; see `update::check`.
+    if matches!(
+        update::check::maybe_startup_check(&args),
+        update::check::StartupUpdateOutcome::ExitSuccess
+    ) {
+        return;
     }
 
     let requested_backend = resolve_backend_id();

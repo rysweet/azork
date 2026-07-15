@@ -13,6 +13,7 @@
 use crate::dungeon::links;
 use crate::dungeon::map::DungeonMap;
 use crate::dungeon::{commands, render};
+use crate::secrets::scrub;
 use serde_json::json;
 use std::io::{self, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -87,7 +88,7 @@ pub fn route(map: &DungeonMap, method: &str, path: &str) -> RouteResponse {
         return RouteResponse {
             status: 200,
             content_type: "application/json; charset=utf-8",
-            body: serde_json::to_string(&summaries).unwrap_or_else(|_| "[]".to_string()),
+            body: scrub(&serde_json::to_string(&summaries).unwrap_or_else(|_| "[]".to_string())),
         };
     }
 
@@ -111,7 +112,7 @@ pub fn route(map: &DungeonMap, method: &str, path: &str) -> RouteResponse {
                 RouteResponse {
                     status: 200,
                     content_type: "application/json; charset=utf-8",
-                    body: serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string()),
+                    body: scrub(&serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string())),
                 }
             }
             None => not_found(),
@@ -122,18 +123,18 @@ pub fn route(map: &DungeonMap, method: &str, path: &str) -> RouteResponse {
         return match map.resource(resource_id) {
             Some(res) => {
                 let body = json!({
-                    "id": res.id,
-                    "name": res.name,
-                    "kind": res.kind,
-                    "region": res.region,
-                    "icon": res.icon,
+                    "id": scrub(&res.id),
+                    "name": scrub(&res.name),
+                    "kind": scrub(&res.kind),
+                    "region": scrub(&res.region),
+                    "icon": scrub(&res.icon),
                     "portal_url": links::portal_url(&res.id),
                     "suggested_commands": commands::suggested_commands(&res.kind, &res.id),
                 });
                 RouteResponse {
                     status: 200,
                     content_type: "application/json; charset=utf-8",
-                    body: serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string()),
+                    body: scrub(&serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string())),
                 }
             }
             None => not_found(),

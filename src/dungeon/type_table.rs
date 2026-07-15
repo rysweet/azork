@@ -85,7 +85,7 @@ pub const TABLE: &[TypeEntry] = &[
     TypeEntry {
         type_prefix: "microsoft.resources/resourcegroups",
         icon: "resource-group",
-        command_template: "az group show --name {id}",
+        command_template: "az group show --name {resource_group}",
     },
 ];
 

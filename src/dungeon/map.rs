@@ -7,6 +7,7 @@
 
 use crate::az_runner::AzRunner;
 use crate::dungeon::icons;
+use crate::dungeon::validate;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::hash_map::DefaultHasher;
@@ -179,8 +180,9 @@ pub fn build_cancellable(
         }
 
         let name = match group.get("name").and_then(Value::as_str) {
-            Some(n) => n.to_string(),
+            Some(n) if validate::is_valid_resource_group_name(n) => n.to_string(),
             None => continue, // Malformed row: no usable room id, skip it.
+            Some(_) => continue,
         };
         let region = group
             .get("location")
@@ -203,8 +205,11 @@ pub fn build_cancellable(
                         ) else {
                             continue; // Skip a single malformed resource entry.
                         };
+                        let Some(parsed_id) = validate::parse_resource_id(id) else {
+                            continue;
+                        };
                         if subscription == "unknown" {
-                            if let Some(sub) = subscription_from_id(id) {
+                            if let Some(sub) = subscription_from_id(parsed_id.raw()) {
                                 subscription = sub;
                             }
                         }
@@ -214,7 +219,7 @@ pub fn build_cancellable(
                             .unwrap_or(&region)
                             .to_string();
                         resources.push(ResourceNode {
-                            id: id.to_string(),
+                            id: parsed_id.raw().to_string(),
                             name: rname.to_string(),
                             kind: kind.to_string(),
                             region: res_region,

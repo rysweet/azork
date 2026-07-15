@@ -142,6 +142,27 @@ Run it directly during development:
 cargo run
 ```
 
+### Keeping it up to date
+
+AzZork can update itself from GitHub Releases:
+
+```bash
+azork update            # download & install the latest release, if newer
+azork update --check    # only report whether an update is available
+```
+
+It also performs a cheap, cached update check at startup that is fully
+opt-out and safe under CI / non-interactive use:
+
+```bash
+export AZORK_NO_UPDATE_CHECK=1   # disable the automatic startup check
+```
+
+Updates are verified by SHA-256 before install and the check is skipped
+automatically under CI, non-TTY, or subprocess invocation, so it never hangs or
+prompts in automation. See the [Self-Update guide](docs/UPDATING.md) for the
+full trust model, exit codes, and release flow.
+
 ## Usage
 
 ### Offline mock backend (default — no Azure credentials needed)
@@ -182,6 +203,7 @@ Rooms beyond the cap are still navigable; their contents are lazily summarised.
 > game (`drop`) operate on the in-memory world model only — AzZork does not
 > delete real Azure resources.
 
+
 ## Dungeon Crawler Mode 🗺️
 
 Prefer a map to a REPL? `azork crawl` (alias `azork dungeon`) turns your whole
@@ -204,13 +226,11 @@ shows its icon, a deep link straight to that resource's page in the Azure
 portal, and one or more suggested read-only `az` commands to inspect it
 (display-only — nothing is ever executed for you).
 
-It's **strictly read-only** (only `list`/`show`-class `az` calls, through the
-same `AzRunner` seam as the rest of AzZork), renders fully offline via a
-built-in native SVG/HTML renderer with no fixed subscription-size cap, and
-optionally (behind `--playwright`, always degrading gracefully) attempts a
-richer hand-drawn pass via a headless browser.
-
-Full details: [docs/DUNGEON-CRAWLER.md](docs/DUNGEON-CRAWLER.md).
+It is **strictly read-only** (only `list`/`show`-class `az` calls), uses the
+same `AzRunner` seam as the rest of AzZork, validates resource IDs before
+building deep links or command suggestions, scrubs secret-shaped text from the
+rendered output, and binds its local server to loopback only. Full details:
+[docs/DUNGEON-CRAWLER.md](docs/DUNGEON-CRAWLER.md).
 
 ## Outside-in-testing (OIT) agent 🤖
 
@@ -406,8 +426,12 @@ Full documentation lives in [`docs/`](docs/):
 - [Usage guide](docs/USAGE.md) — every command, the Grue mechanic, and scoring.
 - [Tutorial](docs/TUTORIAL.md) — a guided playthrough from first `look` to Cloud Guardian.
 - [Configuration reference](docs/CONFIGURATION.md) — backend selection, the mock world, and the read-only `az` backend.
+- [Self-Update guide](docs/UPDATING.md) — the `azork update` command, the cached startup check, security/trust model, and release flow.
+- [Development guide](docs/DEVELOPMENT.md) — pre-commit hooks, CI, and test coverage.
 - [API / module reference](docs/API.md) — internal architecture for contributors.
 - [Dungeon Crawler Mode](docs/DUNGEON-CRAWLER.md) — the map view: `azork crawl`, icons, the local server, and interactive room pop-ups.
+- [Security policy](SECURITY.md) — threat model, guarantees, and how to report vulnerabilities.
+- [Security audit](docs/SECURITY-AUDIT.md) — findings, fixes, and verification results.
 
 ## License
 

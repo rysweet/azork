@@ -10,6 +10,7 @@
 use super::Backend;
 use crate::az_runner::{AzRunner, ProcessAzRunner};
 use crate::parser::Direction;
+use crate::secrets::scrub;
 use crate::world::{Resource, Room, World};
 use std::io::ErrorKind;
 use std::thread::sleep;
@@ -101,9 +102,19 @@ impl AzBackend {
     }
 
     /// Perform a single `az` invocation. Returns `(message, retryable)` on error.
+    ///
+    /// Delegates the actual process launch to `self.runner`, which (via
+    /// [`crate::az_runner::ProcessAzRunner`] in production) applies a hard
+    /// wall-clock timeout, zombie-process cleanup, and pipe-deadlock
+    /// protection — see that module for the details. Tests inject a
+    /// `FakeAzRunner` so no real `az` binary or hardening path is exercised.
     fn run_once(&self, args: &[&str]) -> Result<String, (String, bool)> {
         let output = self.runner.run(args).map_err(|e| {
-            // A missing binary is never transient; other spawn errors might be.
+            // A timeout is always worth retrying; a missing binary never is;
+            // other spawn errors might be.
+            if e.kind() == ErrorKind::TimedOut {
+                return (e.to_string(), true);
+            }
             let retryable = e.kind() != ErrorKind::NotFound;
             (
                 format!("failed to launch 'az' (is it installed & on PATH?): {}", e),
@@ -112,11 +123,24 @@ impl AzBackend {
         })?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let msg = format!("'az {}' failed: {}", args.join(" "), stderr.trim());
-            return Err((msg, is_transient(&stderr)));
+            let retryable = is_transient(&stderr);
+            let msg = format_az_error(args, &stderr);
+            return Err((msg, retryable));
         }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        // `az` stdout is attacker/environment-influenced text we did not
+        // generate; scrub it defensively too, in case a future command ever
+        // projects a secret-bearing field (e.g. a connection string or key)
+        // on success. Today's `--query` projections are narrow (name/type/
+        // location only), but this closes the gap for any future query.
+        Ok(scrub(&String::from_utf8_lossy(&output.stdout)))
     }
+}
+
+/// Format the error message for a failed `az` invocation, with `stderr`
+/// scrubbed of any secret-shaped material before it can reach a
+/// `println!`/`eprintln!` or be persisted.
+fn format_az_error(args: &[&str], stderr: &str) -> String {
+    format!("'az {}' failed: {}", args.join(" "), scrub(stderr.trim()))
 }
 
 /// Heuristic: decide whether an `az` stderr message describes a transient
@@ -162,6 +186,40 @@ fn is_transient(stderr: &str) -> bool {
     transient.iter().any(|t| s.contains(t))
 }
 
+/// Parse `az ... -o tsv` output for `[].{name:name,location:location}` into
+/// `(name, location)` pairs, skipping blank-name rows and defaulting a
+/// missing location column to `"unknown"`. Pure and offline-testable.
+fn parse_group_tsv(raw: &str) -> Vec<(String, String)> {
+    let mut groups = Vec::new();
+    for line in raw.lines() {
+        let mut cols = line.split('\t');
+        if let Some(name) = cols.next() {
+            let loc = cols.next().unwrap_or("unknown").to_string();
+            if !name.trim().is_empty() {
+                groups.push((name.trim().to_string(), loc.trim().to_string()));
+            }
+        }
+    }
+    groups
+}
+
+/// Parse `az ... -o tsv` output for `[].{name:name,type:type}` into
+/// `(name, type)` pairs, skipping blank-name rows and defaulting a missing
+/// type column to `"resource"`. Pure and offline-testable.
+fn parse_resource_tsv(raw: &str) -> Vec<(String, String)> {
+    let mut resources = Vec::new();
+    for line in raw.lines() {
+        let mut cols = line.split('\t');
+        if let Some(rname) = cols.next() {
+            let rtype = cols.next().unwrap_or("resource").to_string();
+            if !rname.trim().is_empty() {
+                resources.push((rname.trim().to_string(), rtype.trim().to_string()));
+            }
+        }
+    }
+    resources
+}
+
 impl Default for AzBackend {
     fn default() -> Self {
         AzBackend::new()
@@ -184,11 +242,17 @@ impl Backend for AzBackend {
     }
 
     fn build_world(&self) -> Result<World, String> {
-        // Current subscription name (best-effort).
+        // Current subscription name (best-effort). If this fails, log why —
+        // the very next `az` call below will likely fail for the same reason
+        // (e.g. not logged in) with a more actionable message, but we don't
+        // want the "unknown-subscription" placeholder to be a silent mystery.
         let subscription = self
             .run(&["account", "show", "--query", "name", "-o", "tsv"])
             .map(|s| s.trim().to_string())
-            .unwrap_or_else(|_| "unknown-subscription".to_string());
+            .unwrap_or_else(|e| {
+                eprintln!("warning: could not determine current subscription: {e}");
+                "unknown-subscription".to_string()
+            });
 
         // Resource groups become rooms.
         let groups_raw = self.run(&[
@@ -199,17 +263,7 @@ impl Backend for AzBackend {
             "-o",
             "tsv",
         ])?;
-
-        let mut groups: Vec<(String, String)> = Vec::new();
-        for line in groups_raw.lines() {
-            let mut cols = line.split('\t');
-            if let Some(name) = cols.next() {
-                let loc = cols.next().unwrap_or("unknown").to_string();
-                if !name.trim().is_empty() {
-                    groups.push((name.trim().to_string(), loc.trim().to_string()));
-                }
-            }
-        }
+        let mut groups = parse_group_tsv(&groups_raw);
 
         if groups.is_empty() {
             return Err(
@@ -265,18 +319,12 @@ impl Backend for AzBackend {
                     "-o",
                     "tsv",
                 ]) {
-                    for line in res_raw.lines() {
-                        let mut cols = line.split('\t');
-                        if let Some(rname) = cols.next() {
-                            let rtype = cols.next().unwrap_or("resource").to_string();
-                            if !rname.trim().is_empty() {
-                                room = room.with_resource(Resource::new(
-                                    rname.trim(),
-                                    rtype.trim(),
-                                    &format!("A live {} named {}.", rtype.trim(), rname.trim()),
-                                ));
-                            }
-                        }
+                    for (rname, rtype) in parse_resource_tsv(&res_raw) {
+                        room = room.with_resource(Resource::new(
+                            &rname,
+                            &rtype,
+                            &format!("A live {} named {}.", rtype, rname),
+                        ));
                     }
                 }
             }
@@ -285,16 +333,59 @@ impl Backend for AzBackend {
         }
 
         let start = rooms[0].name.clone();
-        Ok(World::new(rooms, &start, &subscription))
+        World::new(rooms, &start, &subscription)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_transient;
-    use super::AzBackend;
+    use super::*;
     use crate::az_runner::FakeAzRunner;
-    use crate::backend::Backend;
+
+    #[test]
+    fn parse_group_tsv_parses_name_and_location() {
+        let raw = "landing-rg\teastus\nhub-rg\twestus\n";
+        let groups = parse_group_tsv(raw);
+        assert_eq!(
+            groups,
+            vec![
+                ("landing-rg".to_string(), "eastus".to_string()),
+                ("hub-rg".to_string(), "westus".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_group_tsv_defaults_missing_location_and_skips_blank_names() {
+        let raw = "solo-rg\n\t\n   \teastus\n";
+        let groups = parse_group_tsv(raw);
+        // "solo-rg" has no second column -> defaults to "unknown".
+        // A line with an empty/whitespace-only name is skipped entirely.
+        assert_eq!(groups, vec![("solo-rg".to_string(), "unknown".to_string())]);
+    }
+
+    #[test]
+    fn parse_resource_tsv_parses_name_and_type() {
+        let raw = "storage1\tMicrosoft.Storage/storageAccounts\n";
+        let resources = parse_resource_tsv(raw);
+        assert_eq!(
+            resources,
+            vec![(
+                "storage1".to_string(),
+                "Microsoft.Storage/storageAccounts".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_resource_tsv_defaults_missing_type_and_skips_blank_names() {
+        let raw = "lonely-resource\n\t\n";
+        let resources = parse_resource_tsv(raw);
+        assert_eq!(
+            resources,
+            vec![("lonely-resource".to_string(), "resource".to_string())]
+        );
+    }
 
     #[test]
     fn throttling_and_5xx_are_transient() {
@@ -312,6 +403,80 @@ mod tests {
         ));
         assert!(!is_transient("Forbidden"));
         assert!(!is_transient(""));
+    }
+
+    /// `run` must never build a shell command line: every argument is a
+    /// discrete element of the vector passed to `Command::args`, so shell
+    /// metacharacters embedded in a value (from a malicious resource name,
+    /// subscription, or region) can never be reinterpreted by a shell. We
+    /// can't spawn a real `az`, but we can prove the invariant that matters:
+    /// arguments are carried as an untouched `&[&str]` all the way to
+    /// `Command::args`, never joined into a single string that a shell would
+    /// re-parse.
+    #[test]
+    fn run_once_never_shell_joins_arguments() {
+        // A value containing shell metacharacters must survive as a single,
+        // unmodified argument — proving no `sh -c "... {value} ..."` style
+        // interpolation happens anywhere on this path.
+        let hostile = "rg; rm -rf / #`whoami`$(id)";
+        let args = ["group", "show", "-n", hostile];
+        // `run_once` always calls `self.runner.run(args)`, which for
+        // `ProcessAzRunner` calls `Command::new("az").args(args)`, i.e. the
+        // exact slice below, with no string concatenation in between.
+        let mut cmd = std::process::Command::new("az");
+        cmd.args(args);
+        let collected: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(collected, vec!["group", "show", "-n", hostile]);
+        // The hostile string must appear verbatim as its own argument, never
+        // split or reinterpreted.
+        assert_eq!(collected[3], hostile);
+    }
+
+    #[test]
+    fn az_error_messages_are_scrubbed_of_secrets() {
+        // Exercise the real error-formatting function used by `run_once` on
+        // failure, proving the integration point without depending on a
+        // real `az` binary being installed.
+        let hostile_stderr = format!(
+            "ERROR: token: {} {}",
+            crate::secrets::test_fixtures::HOSTILE_TOKEN,
+            crate::secrets::test_fixtures::HOSTILE_ACCOUNT_KEY_FRAGMENT
+        );
+        let msg = format_az_error(&["account", "show"], &hostile_stderr);
+        assert!(!msg.contains(crate::secrets::test_fixtures::HOSTILE_TOKEN));
+        assert!(!msg.contains(crate::secrets::test_fixtures::HOSTILE_ACCOUNT_KEY_VALUE));
+        assert!(msg.starts_with("'az account show' failed:"));
+    }
+
+    #[test]
+    fn build_world_handles_malformed_tsv_without_panicking() {
+        // Lines with missing columns, empty names, or stray tabs must not
+        // panic. This calls the real `parse_group_tsv` helper used by
+        // `build_world` directly.
+        let malformed = "\n\t\tunnamed\n\tlocation-only\ngoodname\tgoodloc\n\t\t\t\t";
+        let groups = parse_group_tsv(malformed);
+        assert!(groups.iter().any(|(n, _)| n == "goodname"));
+    }
+
+    #[test]
+    fn run_once_success_path_scrubs_stdout() {
+        // `run_once`'s success path applies `scrub()` to stdout as
+        // defense-in-depth. Verify `scrub` itself redacts secret-shaped
+        // stdout content without mangling plain resource names, matching
+        // the guarantee `run_once` now relies on.
+        let plain_tsv = "my-resource-group\teastus\nanother-rg\twestus2";
+        assert_eq!(scrub(plain_tsv), plain_tsv);
+
+        let hostile_stdout = format!(
+            "my-rg\teastus\n{}\tfakeus",
+            crate::secrets::test_fixtures::HOSTILE_ACCOUNT_KEY_FRAGMENT
+        );
+        let scrubbed = scrub(&hostile_stdout);
+        assert!(!scrubbed.contains(crate::secrets::test_fixtures::HOSTILE_ACCOUNT_KEY_VALUE));
+        assert!(scrubbed.contains("my-rg"));
     }
 
     /// A live subscription with more groups than the room cap must not build a

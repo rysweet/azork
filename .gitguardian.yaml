@@ -1,0 +1,19 @@
+version: 2
+
+# GitGuardian scanning configuration for azork.
+#
+# `src/secrets.rs` contains the unit tests for our own secret-redaction
+# helper (`scrub()`). Those tests intentionally embed secret-*shaped*
+# literals (fake Azure Storage account keys, fake SAS signatures, fake
+# bearer/JWT tokens, fake passwords) so we can assert that `scrub()`
+# redacts them. None of these values are real credentials — they are
+# synthetic fixtures used only to prove the redaction logic works, and
+# GitGuardian's static scanners flag them as false positives because the
+# *shape* of a secret is exactly what the test is designed to produce.
+#
+# We scope the ignore to this single file rather than disabling scanning
+# repo-wide, so any real secret accidentally introduced elsewhere is still
+# caught.
+secret:
+  ignored_paths:
+    - "src/secrets.rs"

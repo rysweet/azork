@@ -136,7 +136,15 @@ mod tests {
     fn adapter_agent_step_resolves_via_registry() {
         let a = AzorkAdapter::new(registry());
         let out = a
-            .execute_agent_step("create a storage account", None, None, None, ".", None, None)
+            .execute_agent_step(
+                "create a storage account",
+                None,
+                None,
+                None,
+                ".",
+                None,
+                None,
+            )
             .expect("agent step");
         assert!(!out.is_empty());
     }

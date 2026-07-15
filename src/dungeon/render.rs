@@ -8,6 +8,7 @@
 //! `docs/DUNGEON-CRAWLER.md#rendering`.
 
 use crate::dungeon::map::DungeonMap;
+use crate::secrets::scrub;
 use std::collections::HashMap;
 
 /// Render `map` to a self-contained HTML document.
@@ -47,14 +48,14 @@ pub fn render_html(map: &DungeonMap) -> String {
                 "<g class=\"resource\" data-resource-id=\"{id}\"><title>{name} ({kind})</title>\
                  <rect x=\"{ix}\" y=\"{iy}\" width=\"20\" height=\"20\" rx=\"3\" class=\"icon icon-{icon}\"/>\
                  <text x=\"{tx}\" y=\"{ty}\" class=\"icon-label\">{icon_short}</text></g>",
-                id = escape_html(&res.id),
-                name = escape_html(&res.name),
-                kind = escape_html(&res.kind),
+                id = escape_html(&scrub(&res.id)),
+                name = escape_html(&scrub(&res.name)),
+                kind = escape_html(&scrub(&res.kind)),
                 ix = ix,
                 iy = iy,
                 tx = ix + 2,
                 ty = iy + 14,
-                icon = escape_html(&res.icon),
+                icon = escape_html(&scrub(&res.icon)),
                 icon_short = escape_html(icon_short),
             ));
         }
@@ -64,14 +65,14 @@ pub fn render_html(map: &DungeonMap) -> String {
              <rect x=\"{px}\" y=\"{py}\" width=\"{w}\" height=\"{h}\" rx=\"6\" class=\"room-wall\"/>\
              <text x=\"{tx}\" y=\"{ty}\" class=\"room-label\">{name}</text>\
              {icons}</g>",
-            id = escape_html(&room.id),
+            id = escape_html(&scrub(&room.id)),
             px = px,
             py = py,
             w = ROOM_SIZE,
             h = ROOM_SIZE,
             tx = px + 8,
             ty = py + 18,
-            name = escape_html(&room.name),
+            name = escape_html(&scrub(&room.name)),
             icons = resource_icons,
         ));
     }
@@ -95,7 +96,7 @@ pub fn render_html(map: &DungeonMap) -> String {
         ""
     };
 
-    format!(
+    let html = format!(
         r#"<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -160,13 +161,14 @@ pub fn render_html(map: &DungeonMap) -> String {
 </body>
 </html>
 "#,
-        subscription = escape_html(&map.subscription),
+        subscription = escape_html(&scrub(&map.subscription)),
         partial_banner = partial_banner,
         width = width,
         height = height,
         edges = svg_edges,
         rooms = svg_rooms,
-    )
+    );
+    scrub(&html)
 }
 
 /// A short (<=2 char) glyph shown inline on a resource's icon tile; purely

@@ -12,6 +12,7 @@
 
 use azork::az_runner::{AzRunner, FakeAzRunner};
 use azork::dungeon::{cli, commands, icons, links, map, playwright, render, server};
+use azork::secrets::test_fixtures;
 
 // ---------------------------------------------------------------------------
 // Fixtures — shaped exactly like real `az ... -o json` output.
@@ -53,27 +54,6 @@ const GROUP_LIST_JSON: &str = r#"[
   }
 ]"#;
 
-const WEB_RG_RESOURCES_JSON: &str = r#"[
-  {
-    "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/web-rg/providers/Microsoft.Web/sites/app1",
-    "name": "app1",
-    "type": "Microsoft.Web/sites",
-    "location": "eastus",
-    "resourceGroup": "web-rg",
-    "kind": "app",
-    "tags": null
-  },
-  {
-    "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/web-rg/providers/Microsoft.KeyVault/vaults/kv1",
-    "name": "kv1",
-    "type": "Microsoft.KeyVault/vaults",
-    "location": "eastus",
-    "resourceGroup": "web-rg",
-    "properties": {"vaultUri": "https://kv1.vault.azure.net/", "connectionString": "Endpoint=sb://leak;SharedAccessKey=SECRETVALUE123"},
-    "tags": null
-  }
-]"#;
-
 const DATA_RG_RESOURCES_JSON: &str = r#"[
   {
     "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/data-rg/providers/Microsoft.Storage/storageAccounts/mystorageacct",
@@ -87,10 +67,34 @@ const DATA_RG_RESOURCES_JSON: &str = r#"[
 
 const ISO_RG_RESOURCES_JSON: &str = "[]";
 
+fn web_rg_resources_json() -> String {
+    format!(
+        r#"[{{
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/web-rg/providers/Microsoft.Web/sites/app1",
+    "name": "app1",
+    "type": "Microsoft.Web/sites",
+    "location": "eastus",
+    "resourceGroup": "web-rg",
+    "kind": "app",
+    "tags": null
+  }}, {{
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/web-rg/providers/Microsoft.KeyVault/vaults/kv1",
+    "name": "kv1",
+    "type": "Microsoft.KeyVault/vaults",
+    "location": "eastus",
+    "resourceGroup": "web-rg",
+    "properties": {{"vaultUri": "https://kv1.vault.azure.net/", "connectionString": "Endpoint=sb://example;{fragment}"}},
+    "tags": null
+  }}]"#,
+        fragment = test_fixtures::HOSTILE_ACCOUNT_KEY_FRAGMENT
+    )
+}
+
 fn fixture_runner() -> FakeAzRunner {
+    let web = web_rg_resources_json();
     FakeAzRunner::new()
         .with(GROUP_LIST_ARGS, GROUP_LIST_JSON)
-        .with(&resource_list_args("web-rg"), WEB_RG_RESOURCES_JSON)
+        .with(&resource_list_args("web-rg"), &web)
         .with(&resource_list_args("data-rg"), DATA_RG_RESOURCES_JSON)
         .with(&resource_list_args("iso-rg"), ISO_RG_RESOURCES_JSON)
 }
@@ -131,7 +135,7 @@ fn small_map() -> map::DungeonMap {
                 x: 0,
                 y: 0,
                 resources: vec![map::ResourceNode {
-                    id: "/subscriptions/0/resourceGroups/web-rg/providers/Microsoft.Web/sites/app1"
+                    id: "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/web-rg/providers/Microsoft.Web/sites/app1"
                         .to_string(),
                     name: "app1".to_string(),
                     kind: "Microsoft.Web/sites".to_string(),
@@ -216,14 +220,14 @@ fn build_never_leaks_secret_looking_fields_from_resource_properties() {
 
     let rendered = render::render_html(&dmap);
     assert!(
-        !rendered.contains("SECRETVALUE123"),
+        !rendered.contains(test_fixtures::HOSTILE_ACCOUNT_KEY_VALUE),
         "raw `properties` blobs (which may contain secrets) must never reach the rendered map"
     );
 
     for room in &dmap.rooms {
         for res in &room.resources {
-            assert!(!res.id.contains("SECRETVALUE123"));
-            assert!(!res.name.contains("SECRETVALUE123"));
+            assert!(!res.id.contains(test_fixtures::HOSTILE_ACCOUNT_KEY_VALUE));
+            assert!(!res.name.contains(test_fixtures::HOSTILE_ACCOUNT_KEY_VALUE));
         }
     }
 }
@@ -458,6 +462,15 @@ fn suggested_commands_never_actually_execute_anything() {
     assert_eq!(a, b);
 }
 
+#[test]
+fn suggested_commands_reject_invalid_ids_and_mutating_verbs() {
+    assert!(commands::suggested_commands("Microsoft.Web/sites", "not-an-arm-id").is_empty());
+    assert!(commands::is_read_only_command("az vm show --ids /subscriptions/0/resourceGroups/x/providers/Microsoft.Compute/virtualMachines/y"));
+    assert!(!commands::is_read_only_command(
+        "az vm delete --ids /subscriptions/0/resourceGroups/x/providers/Microsoft.Compute/virtualMachines/y"
+    ));
+}
+
 // ---------------------------------------------------------------------------
 // links: Azure portal deep links
 // ---------------------------------------------------------------------------
@@ -474,18 +487,22 @@ fn portal_url_strips_leading_slash_and_prefixes_portal_base() {
 
 #[test]
 fn portal_url_handles_id_without_leading_slash() {
-    let id = "subscriptions/x/resourceGroups/y/providers/Microsoft.Web/sites/z";
+    let id = "subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/web-rg/providers/Microsoft.Web/sites/app1";
     let url = links::portal_url(id);
     assert_eq!(
         url,
-        "https://portal.azure.com/#@/resource/subscriptions/x/resourceGroups/y/providers/Microsoft.Web/sites/z"
+        "https://portal.azure.com/#@/resource/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/web-rg/providers/Microsoft.Web/sites/app1"
     );
 }
 
 #[test]
 fn portal_url_always_starts_with_portal_base() {
     for id in ["/a/b/c", "a/b/c", ""] {
-        assert!(links::portal_url(id).starts_with(links::PORTAL_BASE));
+        if links::is_valid_resource_id(id) {
+            assert!(links::portal_url(id).starts_with(links::PORTAL_BASE));
+        } else {
+            assert_eq!(links::portal_url(id), "about:blank");
+        }
     }
 }
 
@@ -613,7 +630,7 @@ fn route_room_detail_404s_for_unknown_room() {
 #[test]
 fn route_resource_detail_includes_icon_portal_link_and_suggested_commands() {
     let dmap = small_map();
-    let resource_id = "/subscriptions/0/resourceGroups/web-rg/providers/Microsoft.Web/sites/app1";
+    let resource_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/web-rg/providers/Microsoft.Web/sites/app1";
     let resp = server::route(&dmap, "GET", &format!("/api/v1/resources/{resource_id}"));
     assert_eq!(resp.status, 200);
 
@@ -629,6 +646,11 @@ fn route_resource_detail_includes_icon_portal_link_and_suggested_commands() {
         .as_array()
         .expect("suggested_commands must be a JSON array");
     assert!(!suggested.is_empty());
+    for cmd in suggested {
+        assert!(commands::is_read_only_command(
+            cmd.as_str().expect("command must be a string")
+        ));
+    }
 }
 
 #[test]
@@ -670,7 +692,7 @@ fn route_never_exposes_secret_looking_data_in_json_responses() {
         let lower = body.to_lowercase();
         assert!(!lower.contains("connectionstring"));
         assert!(!lower.contains("sharedaccesskey"));
-        assert!(!lower.contains("secretvalue"));
+        assert!(!lower.contains(&test_fixtures::HOSTILE_ACCOUNT_KEY_VALUE.to_ascii_lowercase()));
     }
 }
 
@@ -770,6 +792,15 @@ fn serve_picks_a_free_port_when_requested_port_is_zero() {
         "requesting port 0 must resolve to a real OS-assigned port"
     );
     handle.shutdown();
+}
+
+#[test]
+fn serve_rejects_non_loopback_bind_addresses() {
+    let err = match server::serve(small_map(), "0.0.0.0:0") {
+        Ok(_) => panic!("wildcard bind must be rejected"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("loopback"));
 }
 
 // ---------------------------------------------------------------------------

@@ -29,5 +29,6 @@ pub mod playwright;
 pub mod render;
 pub mod server;
 mod type_table;
+mod validate;
 
 pub use map::{CancelToken, DungeonMap, Edge, ResourceNode, Room};
