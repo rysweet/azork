@@ -229,9 +229,11 @@ pub fn build_cancellable(
             // recoverable per-room skip.
         }
 
+        // The room's display name is the same field already validated as
+        // `name` above; reuse it instead of re-parsing the JSON value.
         rooms.push(Room {
+            name: name.clone(),
             id: name,
-            name: region_display_name(group),
             region,
             x,
             y,
@@ -247,18 +249,6 @@ pub fn build_cancellable(
         edges,
         partial,
     })
-}
-
-/// Prefer the group's own `name` field for display; `az group list` always
-/// carries one, but fall back defensively rather than panic if it's ever
-/// absent by the time this is called (the caller already validated `name`
-/// exists, so this only affects display polish, never room identity).
-fn region_display_name(group: &Value) -> String {
-    group
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown")
-        .to_string()
 }
 
 /// Extract the subscription id/name from a resource's ARM id

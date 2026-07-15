@@ -8,6 +8,7 @@
 //! `docs/DUNGEON-CRAWLER.md#rendering`.
 
 use crate::dungeon::map::DungeonMap;
+use std::collections::HashMap;
 
 /// Render `map` to a self-contained HTML document.
 ///
@@ -24,6 +25,11 @@ pub fn render_html(map: &DungeonMap) -> String {
     let mut room_max_x = 0;
     let mut room_max_y = 0;
 
+    // Many resources across a subscription share the same icon key (e.g.
+    // every storage account); cache each key's short glyph the first time
+    // it's computed instead of re-deriving it per resource.
+    let mut glyph_cache: HashMap<&str, String> = HashMap::new();
+
     for room in &map.rooms {
         room_max_x = room_max_x.max(room.x);
         room_max_y = room_max_y.max(room.y);
@@ -34,6 +40,9 @@ pub fn render_html(map: &DungeonMap) -> String {
         for (i, res) in room.resources.iter().enumerate() {
             let ix = px + 10 + (i as i32 % 4) * 24;
             let iy = py + 34 + (i as i32 / 4) * 24;
+            let icon_short = glyph_cache
+                .entry(res.icon.as_str())
+                .or_insert_with(|| short_icon_glyph(&res.icon));
             resource_icons.push_str(&format!(
                 "<g class=\"resource\" data-resource-id=\"{id}\"><title>{name} ({kind})</title>\
                  <rect x=\"{ix}\" y=\"{iy}\" width=\"20\" height=\"20\" rx=\"3\" class=\"icon icon-{icon}\"/>\
@@ -46,7 +55,7 @@ pub fn render_html(map: &DungeonMap) -> String {
                 tx = ix + 2,
                 ty = iy + 14,
                 icon = escape_html(&res.icon),
-                icon_short = escape_html(&short_icon_glyph(&res.icon)),
+                icon_short = escape_html(icon_short),
             ));
         }
 
