@@ -454,6 +454,13 @@ interim QA evidence for these surfaces is:
 - `azork-oit --dry-run` itself, run against the mock backend, as a manual
   outside-in smoke test of the OIT agent's own catalog before any live run.
 
+**Action required before closing the QA phase:** this interim evidence is a
+substitute, not a replacement, for a `gadugi-test` run. The parent
+orchestration must either (a) install `gadugi-test` and execute it against
+these three surfaces, or (b) explicitly and formally accept the interim
+evidence above as sufficient. Do not treat this section as closing the QA
+phase on its own.
+
 ```bash
 cargo build      # compiles cleanly, no warnings
 cargo test --all # 274 tests, all passing
