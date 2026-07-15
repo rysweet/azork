@@ -105,6 +105,8 @@ fn main() {
         _ => {}
     }
 
+    reject_unrecognized_args_or_exit(&args);
+
     // Optional, cached, subprocess-safe startup update check. Never hangs or
     // prompts under CI / non-TTY; see `update::check`.
     if matches!(
@@ -234,6 +236,53 @@ fn record_room(memory: &mut GraphMemory, world: &World) {
     let room_id = memory.remember_room(&room.name, &room.region);
     for res in &room.resources {
         memory.remember_resource(&room_id, &res.name, &res.kind);
+    }
+}
+
+/// Reject any unrecognized top-level subcommand or flag rather than silently
+/// falling through into the interactive game.
+///
+/// By the time this runs, `crawl`/`dungeon`, `update`, `--version`/`-V`/`version`,
+/// and `--help`/`-h` have already been handled (and returned/exited). Anything
+/// else in `args[1]`'s position is either:
+///   - a recognized flag for launching the game itself (`--backend`/`-b`,
+///     `--backend=<id>`), which is allowed through, or
+///   - an unrecognized subcommand (a bare word) or an unrecognized flag
+///     (starts with `-`), which is a usage error.
+fn reject_unrecognized_args_or_exit(args: &[String]) {
+    let mut i = 1;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        match arg {
+            "--backend" | "-b" => {
+                // Skip the flag and its value (if any); the value itself is
+                // not validated here (unrecognized backend ids just warn and
+                // fall back to mock, handled later in `resolve_backend_id`).
+                i += 2;
+                continue;
+            }
+            other if other.starts_with("--backend=") => {
+                i += 1;
+                continue;
+            }
+            other if other.starts_with('-') => {
+                eprintln!(
+                    "azork: unknown flag '{}'\nTry 'azork --help' for usage.",
+                    other
+                );
+                std::process::exit(2);
+            }
+            other => {
+                if i == 1 {
+                    eprintln!(
+                        "azork: unknown subcommand '{}'\nTry 'azork --help' for usage.",
+                        other
+                    );
+                    std::process::exit(2);
+                }
+                i += 1;
+            }
+        }
     }
 }
 
