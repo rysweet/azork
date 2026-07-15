@@ -229,6 +229,9 @@ triple, following the naming convention below:
 | Platform | Asset name |
 | -------- | ---------- |
 | Linux x86_64 (glibc) | `azork-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux aarch64 (glibc) | `azork-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS x86_64 | `azork-x86_64-apple-darwin.tar.gz` |
+| macOS aarch64 (Apple Silicon) | `azork-aarch64-apple-darwin.tar.gz` |
 
 Each asset is accompanied by a sibling checksum file with the same name plus a
 `.sha256` suffix, for example:
@@ -238,9 +241,10 @@ azork-x86_64-unknown-linux-gnu.tar.gz
 azork-x86_64-unknown-linux-gnu.tar.gz.sha256
 ```
 
-Additional target triples (other Linux arches, macOS, Windows) share the same
-convention and are added over time; the target-selection logic is
-forward-compatible with them.
+Additional target triples (e.g. Windows) share the same convention and can be
+added over time; the target-selection logic is forward-compatible with them.
+The `install.sh` bootstrap script (see the top-level [Install](../README.md#install)
+section) uses this same naming convention for its one-line install.
 
 ## Security & trust model
 

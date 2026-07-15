@@ -146,7 +146,46 @@ to check out side-by-side.
 
 ## Install
 
-Requires a Rust toolchain (`cargo`). Then:
+The fastest way to get `azork` is the one-line installer, which downloads a
+prebuilt binary from the latest [GitHub Release](https://github.com/rysweet/azork/releases),
+verifies its SHA-256 checksum, and installs it to your `PATH` — no Rust
+toolchain required:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rysweet/azork/main/install.sh | sh
+```
+
+By default it installs to `~/.local/bin` (falling back to `/usr/local/bin`).
+Override with `AZORK_INSTALL_DIR`, pin a version with `AZORK_VERSION` (or
+`--version`), or preview the resolved download URL without installing:
+
+```bash
+# Pin to a specific release
+curl -fsSL https://raw.githubusercontent.com/rysweet/azork/main/install.sh | sh -s -- --version v0.5.0
+
+# Install somewhere else
+curl -fsSL https://raw.githubusercontent.com/rysweet/azork/main/install.sh | AZORK_INSTALL_DIR=/usr/local/bin sh
+
+# See what would be downloaded, without installing
+curl -fsSL https://raw.githubusercontent.com/rysweet/azork/main/install.sh | sh -s -- --dry-run
+```
+
+Supported platforms: Linux (`x86_64`, `aarch64`) and macOS (`x86_64`,
+`aarch64`/Apple Silicon). Windows users should download a release asset
+manually from the [Releases page](https://github.com/rysweet/azork/releases).
+
+To uninstall, simply remove the binary: `rm $(command -v azork)`.
+
+### Alternative: build from source
+
+Requires a Rust toolchain (`cargo`). Install directly from GitHub without
+cloning (the crate is not published to crates.io):
+
+```bash
+cargo install --git https://github.com/rysweet/azork
+```
+
+Or clone and build locally:
 
 ```bash
 git clone https://github.com/rysweet/azork.git
