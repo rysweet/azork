@@ -12,27 +12,36 @@
 //! `--out` HTML document, and the served map, are fully self-contained and
 //! work offline.
 
+/// The single source of truth for known icon keys: each known key maps to
+/// its own bundled SVG. Both [`svg_for`] and [`canonical_key`] are derived
+/// from this table so the key list only has to be maintained in one place.
+const ICONS: &[(&str, &str)] = &[
+    ("storage-account", STORAGE_ACCOUNT),
+    ("virtual-machine", VIRTUAL_MACHINE),
+    ("app-service", APP_SERVICE),
+    ("key-vault", KEY_VAULT),
+    ("aks", AKS),
+    ("sql-server", SQL_SERVER),
+    ("cosmos-db", COSMOS_DB),
+    ("virtual-network", VIRTUAL_NETWORK),
+    ("public-ip", PUBLIC_IP),
+    ("network-security-group", NETWORK_SECURITY_GROUP),
+    ("load-balancer", LOAD_BALANCER),
+    ("network-interface", NETWORK_INTERFACE),
+    ("resource-group", RESOURCE_GROUP),
+    ("mystery-chest", MYSTERY_CHEST),
+];
+
 /// Resolve an icon key (e.g. `"storage-account"`) to its inline SVG document.
 /// Unknown/unmapped keys fall back to the bundled `mystery-chest` icon so a
 /// newly-released or unrecognized Azure resource type never breaks
 /// rendering.
 pub fn svg_for(icon_key: &str) -> &'static str {
-    match icon_key {
-        "storage-account" => STORAGE_ACCOUNT,
-        "virtual-machine" => VIRTUAL_MACHINE,
-        "app-service" => APP_SERVICE,
-        "key-vault" => KEY_VAULT,
-        "aks" => AKS,
-        "sql-server" => SQL_SERVER,
-        "cosmos-db" => COSMOS_DB,
-        "virtual-network" => VIRTUAL_NETWORK,
-        "public-ip" => PUBLIC_IP,
-        "network-security-group" => NETWORK_SECURITY_GROUP,
-        "load-balancer" => LOAD_BALANCER,
-        "network-interface" => NETWORK_INTERFACE,
-        "resource-group" => RESOURCE_GROUP,
-        _ => MYSTERY_CHEST,
-    }
+    ICONS
+        .iter()
+        .find(|(key, _)| *key == icon_key)
+        .map(|(_, svg)| *svg)
+        .unwrap_or(MYSTERY_CHEST)
 }
 
 /// Normalize an icon key to the one actually backing its rendered SVG
@@ -41,23 +50,11 @@ pub fn svg_for(icon_key: &str) -> &'static str {
 /// `<symbol>` definition (e.g. `render.rs`) by this canonical key never
 /// emit two different ids for what is, visually, the same fallback icon.
 pub fn canonical_key(icon_key: &str) -> &'static str {
-    match icon_key {
-        "storage-account" => "storage-account",
-        "virtual-machine" => "virtual-machine",
-        "app-service" => "app-service",
-        "key-vault" => "key-vault",
-        "aks" => "aks",
-        "sql-server" => "sql-server",
-        "cosmos-db" => "cosmos-db",
-        "virtual-network" => "virtual-network",
-        "public-ip" => "public-ip",
-        "network-security-group" => "network-security-group",
-        "load-balancer" => "load-balancer",
-        "network-interface" => "network-interface",
-        "resource-group" => "resource-group",
-        "mystery-chest" => "mystery-chest",
-        _ => "mystery-chest",
-    }
+    ICONS
+        .iter()
+        .find(|(key, _)| *key == icon_key)
+        .map(|(key, _)| *key)
+        .unwrap_or("mystery-chest")
 }
 
 /// Strip the outer `<svg ...> ... </svg>` wrapper from a bundled icon
@@ -101,22 +98,7 @@ mod tests {
 
     #[test]
     fn every_bundled_icon_is_well_formed() {
-        for key in [
-            "storage-account",
-            "virtual-machine",
-            "app-service",
-            "key-vault",
-            "aks",
-            "sql-server",
-            "cosmos-db",
-            "virtual-network",
-            "public-ip",
-            "network-security-group",
-            "load-balancer",
-            "network-interface",
-            "resource-group",
-            "mystery-chest",
-        ] {
+        for (key, _) in ICONS {
             let svg = svg_for(key);
             assert!(svg.contains("<svg"));
             assert!(svg.contains("</svg>"));
