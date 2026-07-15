@@ -209,6 +209,8 @@ Full documentation lives in [`docs/`](docs/):
 - [Tutorial](docs/TUTORIAL.md) — a guided playthrough from first `look` to Cloud Guardian.
 - [Configuration reference](docs/CONFIGURATION.md) — backend selection, the mock world, and the read-only `az` backend.
 - [API / module reference](docs/API.md) — internal architecture for contributors.
+- [Security policy](SECURITY.md) — threat model, guarantees, and how to report vulnerabilities.
+- [Security audit](docs/SECURITY-AUDIT.md) — findings, fixes, and verification results.
 
 ## License
 

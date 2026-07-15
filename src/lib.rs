@@ -7,4 +7,5 @@
 
 pub mod backend;
 pub mod parser;
+pub mod secrets;
 pub mod world;
