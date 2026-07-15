@@ -21,8 +21,17 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Recursively collects every file under `dir`, skipping build/VCS/vendor
-/// directories that are out of scope for the codename check.
+/// Binary file extensions that can never contain the (plain-text) codenames
+/// we're scanning for. Skipping them avoids reading potentially large binary
+/// blobs (e.g. screenshots) into memory just to fail UTF-8 validation.
+const BINARY_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "ico", "bmp", "webp", "woff", "woff2", "ttf", "otf", "zip", "gz",
+    "tar", "pdf", "wasm",
+];
+
+/// Recursively collects every text-scannable file under `dir`, skipping
+/// build/VCS/vendor directories and known-binary file extensions that are
+/// out of scope for the codename check.
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
@@ -43,7 +52,14 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
         if path.is_dir() {
             collect_files(&path, out);
         } else {
-            out.push(path);
+            let is_binary = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| BINARY_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+                .unwrap_or(false);
+            if !is_binary {
+                out.push(path);
+            }
         }
     }
 }
@@ -65,7 +81,10 @@ fn no_internal_codenames_outside_vendor() {
         let Ok(contents) = fs::read_to_string(&file) else {
             continue;
         };
-        let lower = contents.to_lowercase();
+        // ASCII-only lowercasing is far cheaper than `to_lowercase()` (which
+        // must consult full Unicode case-folding tables) and is sufficient
+        // here since the codenames themselves are plain ASCII.
+        let lower = contents.to_ascii_lowercase();
         for name in &codenames {
             if lower.contains(name) {
                 offenders.push(format!("{}: contains {name:?}", file.display()));
