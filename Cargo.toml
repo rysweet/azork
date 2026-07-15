@@ -12,3 +12,14 @@ name = "azork"
 path = "src/main.rs"
 
 [dependencies]
+
+# Dev-only dependencies used by the update-module TDD tests to build fixtures
+# (compute SHA-256 digests, assemble tar.gz archives, parse release JSON, and
+# construct semver values). The runtime crate deps are added in the
+# implementation step; these only need to be available to the test target.
+[dev-dependencies]
+semver = "1"
+sha2 = "0.10"
+flate2 = "1"
+tar = "0.4"
+serde_json = "1"
