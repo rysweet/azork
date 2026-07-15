@@ -74,7 +74,7 @@ alongside the classic REPL mode — it does not require a separate install:
 
 ```
 azork crawl [--backend <id>] [--serve] [--port <n>] [--out <path>]
-            [--budget <n>] [--playwright]
+            [--budget <n>] [--playwright] [--mock-size <spec>]
 ```
 
 | Flag | Default | Meaning |
@@ -85,6 +85,7 @@ azork crawl [--backend <id>] [--serve] [--port <n>] [--out <path>]
 | `--out <path>` | none | Write the rendered map (self-contained HTML) to a file. Can be combined with `--serve`. |
 | `--budget <n>` | `500` | Soft cap on in-memory resources buffered per enumeration window before flushing to the map graph; tune only if you are constrained on memory. Does **not** limit how much of the subscription is mapped — enumeration always continues to completion or cancellation, just in bounded-size batches. |
 | `--playwright` | off | Best-effort, local-only headless-browser post-processing of the native render (e.g. a rasterized snapshot). Never drives an external website; silently no-ops back to the plain native renderer if browsers aren't installed locally — see [below](#the-optional-playwright-pass). |
+| `--mock-size <spec>` | none (small fixed demo estate) | `mock` backend only: synthesize a larger, deterministic estate instead of the small fixed demo. See [Generating a sized mock tenant](#generating-a-sized-mock-tenant). |
 
 Press `Ctrl-C` to stop the server; enumeration itself can also be cancelled
 mid-flight (`Ctrl-C` during the "Mapping subscription..." phase) and will still
@@ -105,6 +106,54 @@ azork crawl --serve               # mock estate, serve on an OS-assigned port
 azork crawl -b az --serve         # your real subscription, read-only, served
 azork crawl -b az --out map.html  # your real subscription, saved to a file
 ```
+
+## Generating a sized mock tenant
+
+The default `mock` backend (both the interactive game and `azork crawl`)
+serves a small, hand-authored, fixed estate so existing behavior never
+changes. For iterating on the map layout itself (room sizing, corridor
+spacing, decorations) it's often useful to try a much bigger synthetic
+tenant instead — offline, fast, and fully reproducible.
+
+Request a sized synthetic estate with `--mock-size` (on `azork crawl`) or the
+`AZORK_MOCK_SIZE` environment variable (works for `azork crawl` **and** the
+interactive REPL's `mock` backend):
+
+```bash
+# Named presets: small (5 RGs), medium (25), large (100), huge (500);
+# resources-per-group scales with the preset too.
+azork crawl --mock-size large --serve
+
+# Or via the environment (also affects `azork` in interactive mode):
+AZORK_MOCK_SIZE=huge azork crawl --serve
+AZORK_MOCK_SIZE=large azork   # interactive REPL against a synthetic 100-RG estate
+
+# Explicit counts: COUNTxPER_GROUP, e.g. 300 resource groups x 12 resources each
+azork crawl --mock-size 300x12 --out big-map.html
+
+# Override the seed for a different (but still reproducible) variant:
+azork crawl --mock-size large:7 --serve
+```
+
+Env var equivalents, all optional and combinable:
+
+| Variable | Meaning |
+| --- | --- |
+| `AZORK_MOCK_SIZE` | Preset name, bare resource-group count, or `COUNTxPER_GROUP`, same grammar as `--mock-size`. |
+| `AZORK_MOCK_RGS` | Explicit resource-group count; overrides the count implied by `AZORK_MOCK_SIZE`. |
+| `AZORK_MOCK_RESOURCES_PER_RG` | Explicit resources-per-group count; overrides the value implied by `AZORK_MOCK_SIZE`. |
+| `AZORK_MOCK_SEED` | Deterministic PRNG seed override. |
+
+Generation is fully offline (no network, no `az`) and deterministic: the same
+size + seed always produces byte-for-byte identical rooms, resources, and
+corridors, so layout/snapshot tests and screenshots stay stable across runs.
+There is no hard cap on size — generation is a straightforward, streaming
+build bounded only by the counts you ask for. Generated resources are drawn
+from the same Azure types the map's icon set already knows (storage
+accounts, VMs, vnets, web apps, key vaults, AKS, SQL, Cosmos DB, NICs, NSGs,
+public IPs, load balancers), with realistic-looking names and regions, and
+resource groups are laid out on a grid so every room is reachable from the
+start room (no disconnected islands).
 
 ## The map model
 

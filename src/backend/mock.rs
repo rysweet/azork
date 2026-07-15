@@ -3,16 +3,41 @@
 //! No credentials, no network. Just a small, deliberately hazardous cloud for
 //! the player to explore and harden.
 
+use super::mock_gen::MockSizeParams;
 use super::Backend;
 use crate::parser::Direction;
 use crate::world::{Resource, Room, World};
 
-/// Builds a fixed, synthetic world.
-pub struct MockBackend;
+/// The synthetic world a [`MockBackend`] builds.
+enum MockWorldSpec {
+    /// The original, fixed, hand-authored world — unchanged default
+    /// behavior for anyone not requesting a sized estate.
+    Fixed,
+    /// A deterministically-generated, parameterized synthetic estate. See
+    /// [`crate::backend::mock_gen`].
+    Sized(MockSizeParams),
+}
+
+/// Builds a synthetic world: a fixed, hand-authored one by default, or a
+/// deterministically-generated, sized one when requested via
+/// [`MockBackend::sized`].
+pub struct MockBackend {
+    spec: MockWorldSpec,
+}
 
 impl MockBackend {
     pub fn new() -> MockBackend {
-        MockBackend
+        MockBackend {
+            spec: MockWorldSpec::Fixed,
+        }
+    }
+
+    /// Build a mock backend that generates a sized synthetic estate instead
+    /// of the default fixed world. See `docs/DUNGEON-CRAWLER.md#generating-a-sized-mock-tenant`.
+    pub fn sized(params: MockSizeParams) -> MockBackend {
+        MockBackend {
+            spec: MockWorldSpec::Sized(params),
+        }
     }
 }
 
@@ -28,6 +53,11 @@ impl Backend for MockBackend {
     }
 
     fn build_world(&self) -> Result<World, String> {
+        match &self.spec {
+            MockWorldSpec::Sized(params) => return super::mock_gen::generate_world(params),
+            MockWorldSpec::Fixed => {}
+        }
+
         // --- landing-rg (start): lit, the safe entrance ---
         let landing = Room::new(
             "landing-rg",

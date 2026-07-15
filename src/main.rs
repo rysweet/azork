@@ -667,7 +667,17 @@ fn run_crawl(args: dungeon_cli::CrawlArgs) {
                     "Warning: unknown backend '{other}'; falling back to the offline mock estate."
                 );
             }
-            Box::new(demo_runner())
+            match resolve_crawl_mock_size(&args.mock_size) {
+                Some(Ok(params)) => Box::new(backend::mock_gen::fake_runner(&params)),
+                Some(Err(e)) => {
+                    eprintln!(
+                        "Warning: ignoring invalid mock size '{}' ({e}); using the default demo estate.",
+                        args.mock_size.as_deref().unwrap_or("")
+                    );
+                    Box::new(demo_runner())
+                }
+                None => Box::new(demo_runner()),
+            }
         }
     };
 
@@ -748,6 +758,22 @@ fn run_crawl(args: dungeon_cli::CrawlArgs) {
             "(Nothing written to disk and no --serve requested; pass --out <path> or --serve to view the map.)"
         );
     }
+}
+
+/// Resolve the mock estate size requested for `azork crawl`: an explicit
+/// `--mock-size <spec>` flag takes precedence, falling back to the
+/// `AZORK_MOCK_SIZE`/`AZORK_MOCK_RGS`/`AZORK_MOCK_RESOURCES_PER_RG`/
+/// `AZORK_MOCK_SEED` environment variables (see
+/// [`azork::backend::mock_gen::MockSizeParams::from_env`]). Returns `None`
+/// when no sizing was requested at all, so the caller uses the small,
+/// fixed, hand-authored demo estate unchanged.
+fn resolve_crawl_mock_size(
+    explicit: &Option<String>,
+) -> Option<Result<backend::mock_gen::MockSizeParams, String>> {
+    if let Some(spec) = explicit {
+        return Some(backend::mock_gen::MockSizeParams::parse(spec));
+    }
+    backend::mock_gen::MockSizeParams::from_env()
 }
 
 /// A small, hardcoded, offline "mock estate" for Dungeon Crawler Mode's
