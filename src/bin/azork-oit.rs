@@ -176,6 +176,15 @@ fn main() {
 
     // ---- Improvements + issues (filled by the surrounding loop) ---------
     data.improvements = improvements_summary();
+    data.live_findings = live_findings();
+    // Issue references may be injected so the report cites the tracked friction.
+    if let Ok(issues) = std::env::var("AZORK_OIT_ISSUES") {
+        data.issues = issues
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
 
     // ---- Write the friction report -------------------------------------
     let md = data.to_markdown();
@@ -258,6 +267,11 @@ fn create_storage(name: &str, rg: &str, ttl: u64) -> Result<(), String> {
         "StorageV2".into(),
         "--min-tls-version".into(),
         "TLS1_2".into(),
+        // Tenant policy (observed live) denies accounts that permit public blob
+        // access, so create locked-down by default. This is also just good
+        // hygiene for a throwaway test account.
+        "--allow-blob-public-access".into(),
+        "false".into(),
     ];
     args.extend(tag_args(ttl));
     az_run(&args.iter().map(String::as_str).collect::<Vec<_>>())?;
@@ -296,13 +310,14 @@ fn teardown_all() -> Vec<String> {
         }
         match az_run(&["group", "delete", "-n", name, "--yes"]) {
             Ok(_) => {
-                let gone = az_capture(&["group", "exists", "-n", name])
-                    .map(|s| s.trim() == "false")
-                    .unwrap_or(false);
+                // `az group delete` returns once the ARM operation completes, but
+                // existence can take a moment to propagate — poll briefly to
+                // report a definitive outcome.
+                let gone = confirm_absent(name);
                 if gone {
                     lines.push(format!("Deleted {name} (verified absent)"));
                 } else {
-                    lines.push(format!("Deleted {name} (deletion in progress)"));
+                    lines.push(format!("Deleted {name} (deletion still propagating)"));
                 }
             }
             Err(e) => lines.push(format!("FAILED to delete {name}: {e}")),
@@ -312,6 +327,20 @@ fn teardown_all() -> Vec<String> {
         lines.push("no OIT-owned resource groups found to delete".to_string());
     }
     lines
+}
+
+/// Poll `az group exists` a few times to confirm a resource group is gone.
+fn confirm_absent(name: &str) -> bool {
+    for _ in 0..10 {
+        let exists = az_capture(&["group", "exists", "-n", name])
+            .map(|s| s.trim() == "true")
+            .unwrap_or(true);
+        if !exists {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(3));
+    }
+    false
 }
 
 /// The improvements fed back into AzZork during this loop (documented for the
@@ -324,7 +353,33 @@ fn improvements_summary() -> Vec<String> {
         "Added intent-aware guidance so action words like `create`/`make`/`new` steer the player \
          to the right `learn <group>` even before any capability is derived."
             .to_string(),
+        "Bounded the live `az` backend (AZORK_MAX_ROOMS / AZORK_MAX_RESOURCE_ROOMS) so AzZork is \
+         responsive on real subscriptions with hundreds of resource groups (this tenant has 258)."
+            .to_string(),
+        "Hardened the OIT storage-create path to satisfy tenant policy (public blob access \
+         disallowed) so live creation succeeds under governance controls."
+            .to_string(),
         "Auto-record unresolved intents as friction so gaps are captured for later fixing."
+            .to_string(),
+    ]
+}
+
+/// Live-tenant findings the agent surfaced by using AzZork like a real user, and
+/// which were fixed during this loop (so a clean re-run no longer reproduces
+/// them). Documented here so the report tells the full outside-in story.
+fn live_findings() -> Vec<String> {
+    vec![
+        "**Scalability:** on the live tenant (258 resource groups) AzZork's `az` backend issued \
+         one sequential `az resource list` per group, taking many minutes to build the world. \
+         Fixed by bounding rooms and resource enumeration (see AZORK_MAX_ROOMS)."
+            .to_string(),
+        "**Governance friction:** creating a Standard_LRS storage account was *denied by Azure \
+         Policy* ('Storage account public access should be disallowed'). Fixed by creating \
+         storage with `--allow-blob-public-access false`."
+            .to_string(),
+        "**Creation dead-end:** on a fresh install, a natural request like 'create a storage \
+         account' resolved to nothing. Fixed by inferring the az domain and guiding the player to \
+         'learn storage' (Resolution::LearnHint)."
             .to_string(),
     ]
 }

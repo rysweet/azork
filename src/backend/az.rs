@@ -24,19 +24,56 @@ const BASE_BACKOFF: Duration = Duration::from_millis(400);
 ///
 /// All CLI invocation goes through an injected [`AzRunner`], so tests can drive
 /// this backend with canned output instead of the real `az` binary.
+///
+/// On real subscriptions the resource-group count can be in the hundreds, and a
+/// naive "list every group, then list every group's resources" walk issues
+/// *O(groups)* sequential `az` calls — minutes of latency. To stay responsive
+/// the backend is **bounded**: it builds at most [`AzBackend::max_rooms`] rooms
+/// and only eagerly enumerates resources for the first
+/// [`AzBackend::max_resource_rooms`] of them. Both bounds are configurable via
+/// the `AZORK_MAX_ROOMS` / `AZORK_MAX_RESOURCE_ROOMS` environment variables.
 pub struct AzBackend {
     runner: Box<dyn AzRunner>,
+    /// Maximum number of resource groups mapped into rooms.
+    max_rooms: usize,
+    /// Maximum number of rooms whose resources are enumerated during build.
+    max_resource_rooms: usize,
 }
 
+/// Default cap on rooms built from a live subscription.
+const DEFAULT_MAX_ROOMS: usize = 40;
+/// Default cap on rooms whose resources are eagerly enumerated.
+const DEFAULT_MAX_RESOURCE_ROOMS: usize = 8;
+
 impl AzBackend {
-    /// Construct a backend that shells out to the real `az` CLI.
+    /// Construct a backend that shells out to the real `az` CLI, taking room
+    /// bounds from the environment (falling back to sane defaults).
     pub fn new() -> AzBackend {
         AzBackend::with_runner(Box::new(ProcessAzRunner::new()))
     }
 
-    /// Construct a backend over an arbitrary [`AzRunner`] (used by tests).
+    /// Construct a backend over an arbitrary [`AzRunner`] (used by tests), with
+    /// bounds read from the environment.
     pub fn with_runner(runner: Box<dyn AzRunner>) -> AzBackend {
-        AzBackend { runner }
+        AzBackend {
+            runner,
+            max_rooms: env_cap("AZORK_MAX_ROOMS", DEFAULT_MAX_ROOMS),
+            max_resource_rooms: env_cap("AZORK_MAX_RESOURCE_ROOMS", DEFAULT_MAX_RESOURCE_ROOMS),
+        }
+    }
+
+    /// Construct a backend with explicit bounds (used by tests to assert the
+    /// caps without touching process-global environment variables).
+    pub fn with_runner_and_caps(
+        runner: Box<dyn AzRunner>,
+        max_rooms: usize,
+        max_resource_rooms: usize,
+    ) -> AzBackend {
+        AzBackend {
+            runner,
+            max_rooms: max_rooms.max(1),
+            max_resource_rooms,
+        }
     }
 
     /// Run an `az` invocation with bounded retries and exponential backoff.
@@ -131,6 +168,16 @@ impl Default for AzBackend {
     }
 }
 
+/// Read a positive `usize` cap from an environment variable, falling back to
+/// `default` when unset, empty, unparseable, or zero.
+fn env_cap(var: &str, default: usize) -> usize {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(default)
+}
+
 impl Backend for AzBackend {
     fn name(&self) -> &str {
         "az (live Azure)"
@@ -172,13 +219,28 @@ impl Backend for AzBackend {
             );
         }
 
+        // Bound the walk: on large subscriptions (hundreds of groups) mapping
+        // every group — and listing every group's resources — is minutes of
+        // sequential `az` calls. Cap the number of rooms so the game is
+        // responsive; note the truncation so the player knows more exists.
+        let total_groups = groups.len();
+        let truncated = total_groups > self.max_rooms;
+        groups.truncate(self.max_rooms);
+
         // Build rooms, chaining them north<->south so the estate is navigable.
         let mut rooms: Vec<Room> = Vec::new();
         for (i, (gname, location)) in groups.iter().enumerate() {
+            let desc = if truncated && i == 0 {
+                format!(
+                    "Resource group '{}' in {}. (Showing {} of {} resource groups; \
+                     set AZORK_MAX_ROOMS to see more.)",
+                    gname, location, self.max_rooms, total_groups
+                )
+            } else {
+                format!("Resource group '{}' in {}.", gname, location)
+            };
             let mut room = Room::new(
-                gname,
-                &format!("Resource group '{}' in {}.", gname, location),
-                location,
+                gname, &desc, location,
                 true, // assume monitored; we can't cheaply prove otherwise
             );
             if i > 0 {
@@ -188,27 +250,32 @@ impl Backend for AzBackend {
                 room = room.with_exit(Direction::North, &groups[i + 1].0);
             }
 
-            // Resources in this group become objects.
-            if let Ok(res_raw) = self.run(&[
-                "resource",
-                "list",
-                "-g",
-                gname,
-                "--query",
-                "[].{name:name,type:type}",
-                "-o",
-                "tsv",
-            ]) {
-                for line in res_raw.lines() {
-                    let mut cols = line.split('\t');
-                    if let Some(rname) = cols.next() {
-                        let rtype = cols.next().unwrap_or("resource").to_string();
-                        if !rname.trim().is_empty() {
-                            room = room.with_resource(Resource::new(
-                                rname.trim(),
-                                rtype.trim(),
-                                &format!("A live {} named {}.", rtype.trim(), rname.trim()),
-                            ));
+            // Resources are enumerated only for the first `max_resource_rooms`
+            // rooms — one `az resource list` per room is the dominant cost, so we
+            // bound it. Rooms beyond the cap are still navigable; their contents
+            // are simply not pre-listed.
+            if i < self.max_resource_rooms {
+                if let Ok(res_raw) = self.run(&[
+                    "resource",
+                    "list",
+                    "-g",
+                    gname,
+                    "--query",
+                    "[].{name:name,type:type}",
+                    "-o",
+                    "tsv",
+                ]) {
+                    for line in res_raw.lines() {
+                        let mut cols = line.split('\t');
+                        if let Some(rname) = cols.next() {
+                            let rtype = cols.next().unwrap_or("resource").to_string();
+                            if !rname.trim().is_empty() {
+                                room = room.with_resource(Resource::new(
+                                    rname.trim(),
+                                    rtype.trim(),
+                                    &format!("A live {} named {}.", rtype.trim(), rname.trim()),
+                                ));
+                            }
                         }
                     }
                 }
@@ -225,6 +292,9 @@ impl Backend for AzBackend {
 #[cfg(test)]
 mod tests {
     use super::is_transient;
+    use super::AzBackend;
+    use crate::az_runner::FakeAzRunner;
+    use crate::backend::Backend;
 
     #[test]
     fn throttling_and_5xx_are_transient() {
@@ -242,5 +312,50 @@ mod tests {
         ));
         assert!(!is_transient("Forbidden"));
         assert!(!is_transient(""));
+    }
+
+    /// A live subscription with more groups than the room cap must not build a
+    /// room per group, and must only enumerate resources up to the resource cap.
+    #[test]
+    fn build_world_bounds_rooms_and_resource_calls() {
+        // Five groups; caps of 3 rooms and 1 resource-enumerated room.
+        let groups_tsv = "rg0\teastus\nrg1\teastus\nrg2\teastus\nrg3\teastus\nrg4\teastus";
+        let runner = FakeAzRunner::new()
+            .with(&["account", "show", "--query", "name", "-o", "tsv"], "sub")
+            .with(
+                &[
+                    "group",
+                    "list",
+                    "--query",
+                    "[].{name:name,location:location}",
+                    "-o",
+                    "tsv",
+                ],
+                groups_tsv,
+            )
+            // Only rg0's resources should ever be requested (resource cap = 1).
+            .with(
+                &[
+                    "resource",
+                    "list",
+                    "-g",
+                    "rg0",
+                    "--query",
+                    "[].{name:name,type:type}",
+                    "-o",
+                    "tsv",
+                ],
+                "store0\tMicrosoft.Storage/storageAccounts",
+            );
+
+        let backend = AzBackend::with_runner_and_caps(Box::new(runner), 3, 1);
+        let world = backend.build_world().expect("world builds within caps");
+
+        // Room cap honoured: 3 rooms, not 5.
+        assert_eq!(world.rooms_len(), 3);
+        // The starting room's truncation note mentions the total.
+        assert!(world.look().contains("of 5 resource groups"));
+        // rg0 has its resource; rg1/rg2 were never resource-listed (would have
+        // failed as unregistered fake calls if the cap were not honoured).
     }
 }

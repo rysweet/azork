@@ -36,6 +36,8 @@ pub struct ReportData {
     pub runs: Vec<UseCaseRun>,
     /// Improvements made to azork in response to friction (free text bullets).
     pub improvements: Vec<String>,
+    /// Narrative of live-tenant findings surfaced and fixed during the loop.
+    pub live_findings: Vec<String>,
     /// GitHub issue references opened for friction (e.g. "#12").
     pub issues: Vec<String>,
     /// Teardown outcome lines (deletion + verification).
@@ -121,6 +123,14 @@ impl ReportData {
             s.push_str("## Friction found\n\nNo friction surfaced in this run.\n\n");
         }
 
+        if !self.live_findings.is_empty() {
+            s.push_str("## Live-tenant findings (surfaced and fixed)\n\n");
+            for f in &self.live_findings {
+                s.push_str(&format!("- {f}\n"));
+            }
+            s.push('\n');
+        }
+
         if !self.improvements.is_empty() {
             s.push_str("## Improvements fed back into AzZork\n\n");
             for imp in &self.improvements {
@@ -192,6 +202,7 @@ mod tests {
                 },
             ],
             improvements: vec!["Added a `create` guidance path".to_string()],
+            live_findings: vec!["Bounded the live backend for large subscriptions".to_string()],
             issues: vec!["#42 — unresolved intent handling".to_string()],
             teardown: vec!["Deleted azork-oit-nav (verified absent)".to_string()],
         }
