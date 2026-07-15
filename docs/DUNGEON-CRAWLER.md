@@ -5,11 +5,15 @@ map you can click through in a browser.**
 
 Where the classic AzZork REPL (see the [Usage guide](USAGE.md)) plays out one
 resource group at a time as a text adventure, Dungeon Crawler Mode steps back
-and draws the **whole subscription at once**: every resource group is a room,
-every resource inside it is an icon on the floor, and corridors connect rooms
-that share a region or a network relationship. It is read-only, fully offline
-by default, and safe to point at a real subscription — it never creates,
-modifies, or deletes anything.
+and draws the **whole subscription at once** as a real dungeon map: every
+resource group is a **walled, rectilinear room** (not a node in a graph),
+every resource inside it is rendered with **Microsoft's official Azure
+architecture icon** for its resource type, and rooms are joined by
+**corridors with doors** where
+they share a region or a network relationship. The whole thing is drawn on a
+parchment-and-grid background in the style of classic tabletop dungeon maps.
+It is read-only, fully offline by default, and safe to point at a real
+subscription — it never creates, modifies, or deletes anything.
 
 ```
 azork crawl --serve
@@ -32,9 +36,10 @@ map of your subscription. Click any room to see what lives inside it.
 - [Quick start](#quick-start)
 - [Command reference](#command-reference)
 - [The map model](#the-map-model)
-- [Icons](#icons)
-- [Rendering](#rendering)
-- [The optional Playwright renderer](#the-optional-playwright-renderer)
+- [Dungeon-map rendering](#dungeon-map-rendering)
+- [Why a self-designed renderer (tool evaluation)](#why-a-self-designed-renderer-tool-evaluation)
+- [Azure architecture icons](#azure-architecture-icons)
+- [The optional Playwright pass](#the-optional-playwright-pass)
 - [The local HTTP server](#the-local-http-server)
 - [The JSON API](#the-json-api)
 - [Interactivity: room pop-ups](#interactivity-room-pop-ups)
@@ -79,7 +84,7 @@ azork crawl [--backend <id>] [--serve] [--port <n>] [--out <path>]
 | `--port <n>` | `0` (OS-assigned free port) | Port for `--serve`. `0` lets the OS pick a free ephemeral port, which is then printed to stdout. |
 | `--out <path>` | none | Write the rendered map (self-contained HTML) to a file. Can be combined with `--serve`. |
 | `--budget <n>` | `500` | Soft cap on in-memory resources buffered per enumeration window before flushing to the map graph; tune only if you are constrained on memory. Does **not** limit how much of the subscription is mapped — enumeration always continues to completion or cancellation, just in bounded-size batches. |
-| `--playwright` | off | Best-effort: additionally attempt a richer hand-drawn render via a headless-browser pass. Silently falls back to the native renderer if unavailable — see [below](#the-optional-playwright-renderer). |
+| `--playwright` | off | Best-effort, local-only headless-browser post-processing of the native render (e.g. a rasterized snapshot). Never drives an external website; silently no-ops back to the plain native renderer if browsers aren't installed locally — see [below](#the-optional-playwright-pass). |
 
 Press `Ctrl-C` to stop the server; enumeration itself can also be cancelled
 mid-flight (`Ctrl-C` during the "Mapping subscription..." phase) and will still
@@ -128,14 +133,10 @@ Enumeration is **strictly read-only**: it only ever issues `list`/`show`-class
 `az` invocations (an explicit allow-list of read verbs), never anything that
 creates, updates, or deletes a resource, group, or subscription-level setting.
 
-## Icons
+## Dungeon-map rendering
 
-Every resource node is annotated with an icon looked up from its Azure resource
-type (e.g. `Microsoft.Storage/storageAccounts`, `Microsoft.Compute/virtualMachines`,
-`Microsoft.Network/virtualNetworks`, `Microsoft.Web/sites`,
-`Microsoft.KeyVault/vaults`, `Microsoft.ContainerService/managedClusters`,
-`Microsoft.Sql/servers`, `Microsoft.DocumentDB/databaseAccounts`, and more) via
-a type → icon registry.
+The renderer is **native, offline, and deterministic**, and it draws an
+actual dungeon rather than a node-link diagram:
 
 - Where licensing allows, the registry prefers the official Azure architecture
   icon set (SVG). Where it doesn't (offline run, no network, or the bundled
@@ -149,46 +150,130 @@ a type → icon registry.
   `az` command), so adding or overriding an icon (or its suggested command)
   for a type is a one-line change — see [Suggested `az`
   commands](#suggested-az-commands) for how the two stay in sync.
+- **Rooms are walled rectilinear chambers.** Each resource group is drawn as
+  a rectangle with a visible double-line wall, sized to fit the number of
+  resources it contains (more resources → a taller/wider room), not a fixed-
+  size circle or box.
+- **Corridors are orthogonal (L-shaped) hallways, not straight edges.**
+  Where two rooms share a region or an observed network relationship, the
+  renderer draws a right-angled corridor between the nearest wall segments of
+  the two rooms, with a **door glyph** (a short perpendicular tick across the
+  wall) at each end, matching the "wall + door + corridor" vocabulary used by
+  tools like Dungeon Scrawl rather than a plain connecting line.
+- **Parchment/grid background.** The SVG canvas is filled with a subtle
+  square-grid pattern over an off-white/parchment tone, evoking a graph-paper
+  dungeon map rather than a plain white or dark UI background.
+- **Resources are drawn inside their room** as small icon tiles (see [Azure
+  architecture icons](#azure-architecture-icons) below), arranged in a simple
+  in-room grid so a room with many resources doesn't overlap its own walls.
+- **Layout stays a pure function of the map graph.** Room position, size,
+  corridor routing, and door placement are all derived deterministically from
+  room/resource counts and the stable per-room grid position described in
+  [The map model](#the-map-model) — the same subscription always produces
+  pixel-identical output, with no random jitter and no external layout
+  engine.
 
-## Rendering
+The output is a single self-contained HTML document: inline SVG for the
+dungeon geometry and icons, plus a small amount of vanilla JS for the
+click-to-popup interaction — no build step and no CDN fetch, so it opens and
+looks correct with no network access at all. This is the document produced by
+both `--out` (write to a file) and `--serve` (serve over HTTP); the two share
+one renderer, so the file you save and the page you're served are always the
+same map.
 
-The primary renderer is **native, offline, and deterministic**: given the map
-graph, it lays rooms out on a grid, draws corridor walls between adjacent/
-connected rooms, and places each resource's icon inside its room, producing a
-single self-contained HTML document (inline SVG + a small amount of vanilla
-JS — no build step, no CDN fetch, nothing that requires network access to
-view). The same subscription always produces the same map, because layout is
-a pure function of the map graph, not of viewport size, timing, or randomness.
+## Why a self-designed renderer (tool evaluation)
 
-This is the mode used by both `--out` (write to a file you can open directly
-in any browser, even with no network) and `--serve` (serve the same document
-over HTTP).
+Before writing a from-scratch dungeon renderer, the three most obvious
+"draw me a dungeon map" tools were evaluated for **programmatic, offline,
+CI-safe** use — i.e. could `crawl` drive one of them headlessly to lay out
+the map, instead of drawing it itself:
 
-## The optional Playwright renderer
+| Tool | Headless/Playwright reachable? | Documented import/export format for automation? | License/ToS for automated bulk use | Deterministic & usable with no network (incl. in CI)? | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| [Dungeon Scrawl](https://app.dungeonscrawl.com/) | Client-side canvas/WebGL app with no documented headless or scripting API | No stable, versioned public import/export schema for generating maps programmatically (only interactive save/export of hand-drawn maps) | Personal map-making tool; terms don't address automated/bulk generation | No — requires reaching the live site over the network at render time | **No-go** |
+| [Mystic Waffle Maps](https://www.mysticwaffle.com/maps) | Same class of interactive web canvas editor, no headless/API mode documented | No public machine-readable import/export contract | Same gap — no automated-use terms published | No — network + live site required | **No-go** |
+| [Dungeon Map Builder](https://dungeonmapbuilder.com/DungeonMapBuilder/) | Interactive browser tool, no headless/automation entry point documented | No stable export format documented for round-tripping generated data | Same gap | No — network + live site required | **No-go** |
 
-Passing `--playwright` additionally attempts a **best-effort** second pass that
-drives a headless browser against [dungeonscrawl.com](https://www.dungeonscrawl.com/)
-(or an equivalent local renderer) to produce a more richly hand-drawn version
-of the same map graph.
+All three are excellent tools for a *person* hand-drawing a dungeon in a
+browser, but none publishes a stable, versioned, offline-usable API or export
+contract for **automated, unattended, per-crawl map generation** — and none
+publishes terms permitting automated/bulk use. Driving any of them would mean
+every `azork crawl` (and every test) reaching a third-party website over the
+network, which directly conflicts with the "offline, deterministic, no
+network in CI" requirement and would make the map's appearance dependent on
+a service AzZork doesn't control.
 
-This path is intentionally isolated and optional:
+The decision: **build a small, native, self-designed renderer styled after
+the visual language those tools popularized** — walled rectilinear rooms,
+hatched/orthogonal corridors, door ticks, parchment-and-grid background —
+without depending on any of the three at runtime. This keeps `crawl` fully
+offline and deterministic while still delivering a map that reads as a
+dungeon rather than a graph.
 
-- It lives in its own module and is never compiled into, required by, or
-  exercised by the default build, `cargo test`, or CI.
-- It requires a separate one-time setup step (installing Node.js/Playwright
-  browsers) documented inline in that module — it is not a Cargo dependency of
-  the `azork` crate.
-- If the flag is passed but Playwright isn't installed, the site is
-  unreachable, or anything about the browser-driven pass fails, Dungeon
-  Crawler Mode **prints a warning and falls back to the native renderer**
-  automatically. `--playwright` never turns a working native render into a
-  hard failure.
-- No Azure data is retained by the external site beyond what's needed to
-  render the page in the local headless session; no credentials or resource
-  IDs are ever sent anywhere by the native renderer, and the Playwright path
-  only sends the same non-secret shape/label data that's already in the map
-  graph (room names/regions and resource type/name labels — never resource
-  IDs, secrets, or connection strings).
+## Azure architecture icons
+
+Every resource node is drawn using one of Microsoft's **official Azure
+Architecture Icons** ("Azure Public Service Icons" set), looked up from its
+Azure resource type (e.g. `Microsoft.Storage/storageAccounts`,
+`Microsoft.Compute/virtualMachines`, `Microsoft.Network/virtualNetworks`,
+`Microsoft.Web/sites`, `Microsoft.KeyVault/vaults`,
+`Microsoft.ContainerService/managedClusters`, `Microsoft.Sql/servers`,
+`Microsoft.DocumentDB/databaseAccounts`, and more) via the same type → icon
+registry that also drives [suggested `az` commands](#suggested-az-commands).
+
+- **Icons are Microsoft's official Azure Architecture Icons**, downloaded
+  from [learn.microsoft.com/azure/architecture/icons](https://learn.microsoft.com/en-us/azure/architecture/icons/)
+  and used unmodified — not cropped, flipped, rotated, distorted, or
+  recolored — to label each resource's type on the dungeon map, consistent
+  with Microsoft's published icon guidelines for architecture diagrams.
+- **Icons are bundled in the repo, not hotlinked.** The SVGs are embedded
+  directly into the crate at compile time via `include_str!` (see
+  [`src/dungeon/icon_assets.rs`](../src/dungeon/icon_assets.rs)). The
+  rendered map never fetches an icon from a CDN or any third-party site at
+  run time, so a saved `--out` file or a `--serve` session works identically
+  with no network at all.
+- **Attribution and terms** are recorded in
+  [`assets/azure-icons/LICENSE-NOTICE.md`](../assets/azure-icons/LICENSE-NOTICE.md):
+  the icon files remain Microsoft's property, AzZork is not affiliated with
+  or endorsed by Microsoft, and the icons must not be used to represent
+  non-Microsoft products.
+- **Unknown/unrecognized resource types** get Microsoft's generic "All
+  Resources" icon (bundled as `mystery-chest.svg`) rather than failing or
+  omitting the resource from the map, so an unexpected or newly-released
+  resource type never breaks the crawl.
+- The registry is a simple, inspectable table (type prefix → icon key →
+  suggested `az` command) in [`src/dungeon/type_table.rs`](../src/dungeon/type_table.rs),
+  so adding or overriding an icon (or its suggested command) for a type is a
+  one-line change plus dropping in the corresponding official SVG file — see
+  [Suggested `az` commands](#suggested-az-commands) for how the two stay in
+  sync.
+- Icons appear in two places, both driven by the same lookup: as a small tile
+  inside each room on the map, and, larger, next to each resource's entry in
+  the room pop-up.
+
+## The optional Playwright pass
+
+`--playwright` remains available as a **best-effort, fully optional**
+secondary pass, but — matching the tool evaluation above — it never depends
+on or drives an external dungeon-drawing website. Instead it's reserved for
+future local, headless-browser-only post-processing of the *native* render
+(e.g. producing a rasterized screenshot alongside the HTML) without ever
+requiring network access to a third party.
+
+- It lives in its own module ([`src/dungeon/playwright.rs`](../src/dungeon/playwright.rs))
+  and is never compiled into, required by, or exercised by the default
+  build, `cargo test`, or CI.
+- It requires a separate one-time local setup step (installing Node.js/
+  Playwright browsers) documented inline in that module — it is not a Cargo
+  dependency of the `azork` crate.
+- If the flag is passed but Playwright/browsers aren't installed locally, or
+  anything about the pass fails, Dungeon Crawler Mode **prints a one-line
+  warning and continues serving/writing the native dungeon-style render**
+  unchanged. `--playwright` can never turn a working native render into a
+  hard failure, and it never causes `crawl` to reach the network.
+- No Azure data ever leaves the local machine because of this flag: it only
+  ever operates on the already-rendered local HTML, never on live map data
+  sent to a remote site.
 
 ## The local HTTP server
 
@@ -252,6 +337,12 @@ curl http://127.0.0.1:53214/api/v1/rooms/rg-web
 }
 ```
 
+The `icon` field is the stable icon *key* (e.g. `"app-service"`), the same
+key used to look up the bundled SVG under `assets/azure-icons/`; the map's
+own HTML embeds the actual `<svg>` markup inline, while API consumers get
+just the key so they can resolve it however they like (e.g. against their
+own copy of the icon set, or simply displayed as a label).
+
 Resource IDs shown above are the resources' own Azure Resource Manager IDs —
 identifiers, not secrets — and are the only sensitive-looking field the API
 ever returns; no keys, connection strings, or tokens are ever included in any
@@ -263,7 +354,9 @@ Clicking a room on the rendered map opens a client-side pop-up (no page
 reload) that fetches `/api/v1/rooms/<id>` and lists every resource in that
 room, each shown with:
 
-1. Its **icon** (from the [type → icon registry](#icons)).
+1. Its **Azure architecture icon** (from the [type → icon
+   registry](#azure-architecture-icons)), rendered at a larger size than the
+   in-room tile so the resource type is easy to identify at a glance.
 2. A **deep link to the Azure portal** for that exact resource — see
    [Portal deep links](#portal-deep-links).
 3. One or more **suggested read-only `az` commands** for inspecting it — see
@@ -380,9 +473,9 @@ to `127.0.0.1`, so use `http://127.0.0.1:<port>` or `http://localhost:<port>`,
 not a LAN/hostname address; it isn't reachable from another machine by design.
 
 **`--playwright` did nothing different** — this is expected if Playwright
-isn't installed, the network is unavailable, or dungeonscrawl.com couldn't be
-reached; Dungeon Crawler Mode logs a one-line notice and continues with the
-native render rather than failing the whole command.
+isn't installed locally; the pass is a local-only, optional post-process
+step (never a driver of an external website), so it silently no-ops and
+`crawl` continues with the native dungeon-style render.
 
 **The map looks incomplete / says "partial"** — either enumeration was
 cancelled mid-flight (`Ctrl-C`) or the subscription is still being paginated

@@ -1,0 +1,12 @@
+{
+  "name": "azork-tooling",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Node-only dev tooling for azork (Playwright-based real screenshot capture for docs/images/). Not a build/runtime dependency of the Rust crate.",
+  "scripts": {
+    "capture-real-screenshots": "node scripts/capture-real-screenshots.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.61.1"
+  }
+}

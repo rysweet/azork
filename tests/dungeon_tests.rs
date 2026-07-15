@@ -568,6 +568,137 @@ fn render_html_produces_self_contained_document_with_no_external_fetches() {
 }
 
 // ---------------------------------------------------------------------------
+// render: dungeon-map redesign — TDD (red phase) contract for the
+// rectilinear-walled-room, orthogonal-corridor, embedded-icon renderer.
+//
+// These assertions describe the new markup contract render.rs must produce;
+// several will fail against today's force-directed-graph-style renderer
+// (bare `<line class="corridor">` diagonals, glyph-square icons) until it is
+// rewritten. See docs/DUNGEON-CRAWLER.md and the PR description for the
+// tool evaluation + rationale behind the self-designed, Dungeon-Scrawl-style
+// approach.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn render_html_draws_rooms_as_walled_rectilinear_chambers() {
+    let dmap = small_map();
+    let html = render::render_html(&dmap);
+
+    // Each room must still be an addressable group keyed by room id...
+    assert!(html.contains("data-room-id=\"web-rg\""));
+    assert!(html.contains("data-room-id=\"data-rg\""));
+    // ...but rendered as a walled chamber (thick-stroked perimeter), not a
+    // generic single filled rect with no wall styling.
+    assert!(
+        html.contains("class=\"room-wall\"") || html.contains("room-wall"),
+        "each room must be drawn with an explicit wall class distinguishing it as a walled chamber"
+    );
+}
+
+#[test]
+fn render_html_draws_corridors_as_orthogonal_paths_with_doors_not_diagonal_lines() {
+    let dmap = small_map(); // web-rg <-> data-rg edge
+    let html = render::render_html(&dmap);
+
+    assert!(
+        !html.contains("<line class=\"corridor\""),
+        "corridors must no longer be rendered as bare diagonal <line> elements connecting room centers"
+    );
+    assert!(
+        html.contains("class=\"corridor\""),
+        "a corridor element (rectilinear path/polyline) must still be present for a connected room pair"
+    );
+    // Rectilinear routing: expressed as an SVG path with horizontal/vertical
+    // segments (L/H/V commands), not a straight diagonal line primitive.
+    assert!(
+        html.contains("<path") && html.contains("class=\"corridor\""),
+        "corridors between rooms must be drawn as orthogonal (L-shaped) <path> elements"
+    );
+    assert!(
+        html.contains("class=\"door\""),
+        "a door glyph must mark where a corridor meets a room's wall"
+    );
+}
+
+#[test]
+fn render_html_includes_parchment_and_grid_background() {
+    let dmap = small_map();
+    let html = render::render_html(&dmap);
+    assert!(
+        html.contains("parchment"),
+        "the map background must read as parchment/aged-paper, not a plain dark canvas"
+    );
+    assert!(
+        html.contains("grid-line") || html.contains("class=\"grid\""),
+        "a faint grid must be visible behind the dungeon, matching classic tabletop dungeon map styling"
+    );
+}
+
+#[test]
+fn render_html_embeds_resource_icon_svgs_inline_not_hotlinked() {
+    let dmap = small_map(); // app1 has icon "app-service"
+    let html = render::render_html(&dmap);
+
+    assert!(
+        html.contains("data-icon=\"app-service\""),
+        "the app-service resource must be tagged with its resolved icon key"
+    );
+    assert!(
+        !html.contains("<img src=\"http"),
+        "icons must never be hotlinked from a remote URL"
+    );
+    assert!(
+        html.contains("icon-app-service") && html.contains("<svg"),
+        "the app-service icon must be embedded as inline SVG content (a <symbol>/<use> pair or inline <svg>), not a placeholder glyph"
+    );
+}
+
+#[test]
+fn render_html_deduplicates_repeated_icon_definitions() {
+    let mut dmap = small_map();
+    // Add a second resource sharing the same icon key as the first, in a
+    // different room, to prove the icon's SVG definition is embedded once
+    // and reused, not duplicated per-resource.
+    dmap.rooms[1].resources.push(map::ResourceNode {
+        id: "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/data-rg/providers/Microsoft.Web/sites/app2"
+            .to_string(),
+        name: "app2".to_string(),
+        kind: "Microsoft.Web/sites".to_string(),
+        region: "eastus".to_string(),
+        icon: "app-service".to_string(),
+    });
+    let html = render::render_html(&dmap);
+
+    let def_marker = "id=\"icon-app-service\"";
+    let occurrences = html.matches(def_marker).count();
+    assert_eq!(
+        occurrences, 1,
+        "the app-service icon's SVG definition must be embedded exactly once and referenced twice via <use>, not duplicated per resource"
+    );
+    assert_eq!(
+        html.matches("data-icon=\"app-service\"").count(),
+        2,
+        "both app-service resources must be tagged with the icon key even though the definition is shared"
+    );
+}
+
+#[test]
+fn render_html_falls_back_to_default_icon_for_an_unmapped_icon_key() {
+    let mut dmap = small_map();
+    dmap.rooms[0].resources[0].icon = "some-brand-new-unmapped-resource-type".to_string();
+    let html = render::render_html(&dmap);
+
+    assert!(
+        !html.is_empty(),
+        "rendering a resource with an unrecognized icon key must never panic or produce empty output"
+    );
+    assert!(
+        html.contains("icon-mystery-chest") || html.contains(icons::DEFAULT_ICON),
+        "an unmapped icon key must fall back to the bundled mystery-chest icon"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // server: in-process request routing (the JSON API contract)
 // ---------------------------------------------------------------------------
 

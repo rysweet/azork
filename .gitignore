@@ -4,5 +4,10 @@
 # Cargo.lock IS committed: this crate ships a binary (`azork`) and CI builds
 # with `--locked` for reproducible builds and a deterministic self-updater.
 
+# Node.js dev tooling (scripts/capture-real-screenshots.mjs) — not a build or
+# runtime dependency of the Rust crate; package.json/package-lock.json ARE
+# committed for reproducibility, but the installed tree is not.
+node_modules/
+
 # amplihack / session runtime state (not project code)
 .claude/runtime/
