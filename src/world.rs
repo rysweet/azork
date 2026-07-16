@@ -112,6 +112,22 @@ impl Resource {
     }
 }
 
+/// A single governance scorecard badge, derived purely from current resource
+/// hazard state (see [`World::achievements`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Achievement {
+    /// Badge name (e.g. "Fort Knox").
+    pub name: String,
+    /// Decorative emoji shown alongside the badge.
+    pub emoji: String,
+    /// What the badge means when earned.
+    pub description: String,
+    /// Whether every resource currently satisfies this badge's condition.
+    pub earned: bool,
+    /// If locked, names the first offending resource and why; `None` when earned.
+    pub blocker: Option<String>,
+}
+
 /// A room in the dungeon — an Azure resource group.
 #[derive(Debug, Clone)]
 pub struct Room {
@@ -545,6 +561,87 @@ impl World {
             .sum();
         let inv_hazards: u32 = self.inventory.iter().map(|r| r.hazards()).sum();
         room_hazards + inv_hazards
+    }
+
+    /// All resources across every room (in deterministic, sorted room-name
+    /// order) followed by the inventory — used by hazard-scanning features
+    /// that need a stable, reproducible traversal (e.g. [`World::achievements`]).
+    fn all_resources(&self) -> impl Iterator<Item = &Resource> {
+        let mut room_names: Vec<&String> = self.rooms.keys().collect();
+        room_names.sort();
+        room_names
+            .into_iter()
+            .flat_map(|name| self.rooms[name].resources.iter())
+            .chain(self.inventory.iter())
+    }
+
+    /// Governance scorecard badges, derived purely from current resource
+    /// hazard state (public exposure, encryption, locks, cost overruns).
+    ///
+    /// Exactly four badges by design — this is a thin prototype, not a
+    /// general achievement framework. Each locked badge names the first
+    /// offending resource so the player knows what to fix.
+    ///
+    /// Scans the resource list once (not once per badge), stopping as soon
+    /// as a blocker has been found for all four badges.
+    pub fn achievements(&self) -> Vec<Achievement> {
+        let mut fort_knox_blocker: Option<String> = None;
+        let mut no_open_doors_blocker: Option<String> = None;
+        let mut warded_blocker: Option<String> = None;
+        let mut under_budget_blocker: Option<String> = None;
+
+        for r in self.all_resources() {
+            if fort_knox_blocker.is_none() && !r.encrypted {
+                fort_knox_blocker = Some(format!("{} is unencrypted", r.name));
+            }
+            if no_open_doors_blocker.is_none() && r.public {
+                no_open_doors_blocker = Some(format!("{} is public", r.name));
+            }
+            if warded_blocker.is_none() && !r.locked {
+                warded_blocker = Some(format!("{} is unlocked", r.name));
+            }
+            if under_budget_blocker.is_none() && r.monthly_cost >= 500 {
+                under_budget_blocker = Some(format!("{} is over budget", r.name));
+            }
+            if fort_knox_blocker.is_some()
+                && no_open_doors_blocker.is_some()
+                && warded_blocker.is_some()
+                && under_budget_blocker.is_some()
+            {
+                break;
+            }
+        }
+
+        vec![
+            Achievement {
+                name: "Fort Knox".to_string(),
+                emoji: "🔐".to_string(),
+                description: "Every resource encrypted at rest.".to_string(),
+                earned: fort_knox_blocker.is_none(),
+                blocker: fort_knox_blocker,
+            },
+            Achievement {
+                name: "No Open Doors".to_string(),
+                emoji: "🚪".to_string(),
+                description: "No resources exposed to the public internet.".to_string(),
+                earned: no_open_doors_blocker.is_none(),
+                blocker: no_open_doors_blocker,
+            },
+            Achievement {
+                name: "Warded".to_string(),
+                emoji: "🛡️".to_string(),
+                description: "Every resource protected by a management lock.".to_string(),
+                earned: warded_blocker.is_none(),
+                blocker: warded_blocker,
+            },
+            Achievement {
+                name: "Under Budget".to_string(),
+                emoji: "💰".to_string(),
+                description: "No resource is running a cost overrun.".to_string(),
+                earned: under_budget_blocker.is_none(),
+                blocker: under_budget_blocker,
+            },
+        ]
     }
 
     /// Governance posture score (0..=100). Fewer hazards => higher score.
