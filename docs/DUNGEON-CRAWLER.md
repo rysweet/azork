@@ -77,6 +77,7 @@ alongside the classic REPL mode — it does not require a separate install:
 ```
 azork crawl [--backend <id>] [--serve] [--port <n>] [--out <path>]
             [--budget <n>] [--playwright] [--mock-size <spec>]
+            [--snapshot <path>] [--diff <old> <new>]
 ```
 
 | Flag | Default | Meaning |
@@ -88,11 +89,115 @@ azork crawl [--backend <id>] [--serve] [--port <n>] [--out <path>]
 | `--budget <n>` | `500` | Soft cap on in-memory resources buffered per enumeration window before flushing to the map graph; tune only if you are constrained on memory. Does **not** limit how much of the subscription is mapped — enumeration always continues to completion or cancellation, just in bounded-size batches. |
 | `--playwright` | off | Best-effort, local-only headless-browser post-processing of the native render (e.g. a rasterized snapshot). Never drives an external website; silently no-ops back to the plain native renderer if browsers aren't installed locally — see [below](#the-optional-playwright-pass). |
 | `--mock-size <spec>` | none (small fixed demo estate) | `mock` backend only: synthesize a larger, deterministic estate instead of the small fixed demo. See [Generating a sized mock tenant](#generating-a-sized-mock-tenant). |
+| `--snapshot <path>` | none | Write the assembled map as JSON to `<path>`, for later `--diff`ing. Composes with `--out`/`--serve`. Refused (no file written, exit 1) if the map is partial (cancelled mid-enumeration). |
+| `--diff <old> <new>` | none | Compare two previously-written `--snapshot` JSON files and print a "Time Rift" report of rooms/resources added, removed, and changed, then exit. Takes priority over every other flag — no map is built and no backend is contacted. |
 
 Press `Ctrl-C` to stop the server; enumeration itself can also be cancelled
 mid-flight (`Ctrl-C` during the "Mapping subscription..." phase) and will still
 serve whatever partial map has been assembled so far, clearly marked as
 partial.
+
+### Comparing snapshots over time ("Time Rift")
+
+Take a snapshot now, make some infrastructure changes, take another snapshot
+later, then diff them:
+
+```
+azork crawl --snapshot before.json
+# ... time passes, infrastructure changes ...
+azork crawl --snapshot after.json
+azork crawl --diff before.json after.json
+```
+
+`--diff` never contacts a backend — it only reads the two JSON files, so it
+works fully offline regardless of which backend produced the snapshots.
+
+**Snapshot format.** `--snapshot <path>` writes the exact in-memory
+`DungeonMap` graph (the same model described in
+[The map model](#the-map-model)) as pretty-printed JSON via `serde_json`:
+subscription id, `rooms[]` (each with its resources), and `edges[]`. It is a
+plain serialization of existing types — no separate snapshot schema to keep
+in sync. A snapshot is refused, with a clear error and a non-zero exit code,
+if the assembled map is `partial` (i.e. enumeration was cancelled mid-flight
+with Ctrl-C), so a partial view of the estate can never be mistaken for a
+complete one later when diffed:
+
+```
+$ azork crawl --snapshot partial.json
+🗺  Mapping subscription "Contoso-Prod" ...
+^C
+🕯  Dungeon assembled (partial — enumeration was interrupted).
+error: refusing to write snapshot: map is partial (enumeration was cancelled).
+       Re-run without interrupting to capture a complete snapshot.
+```
+
+**Matching rules.** Rooms (resource groups) are matched between the two
+snapshots by their id/name. Resources are matched by their **full ARM
+resource id**, never by display name alone, so a rename is correctly reported
+as unchanged (same id) and a same-named resource re-created in a different
+resource group is correctly reported as removed + added (different ids). A
+resource whose id is unchanged but whose `kind` or `region` differs between
+the two snapshots is reported as **changed**. Resource matching is performed
+across the whole map (not scoped per-room), so a resource moved from one
+resource group to another between snapshots is reported as changed rather
+than a false add/remove pair; the room-level move itself shows up as the
+resource group changing (rooms added/removed) if the group's very existence
+changed too.
+
+**Report format.** `--diff` prints a themed, fully deterministic text report
+— no timestamps, no non-deterministic ordering — grouped into sections that
+are only printed when non-empty, followed by a one-line summary count of net
+additions (`+`), removals (`-`), and in-place changes (`~`):
+
+```
+$ azork crawl --diff before.json after.json
+⚡ Time Rift Report
+
+Rooms added:
+  + rg-newteam (rg-newteam)
+
+Rooms removed:
+  - rg-decommissioned (rg-decommissioned)
+
+Resources added:
+  + /subscriptions/.../rg-newteam/providers/Microsoft.Compute/virtualMachines/vm3 (Microsoft.Compute/vm)
+
+Resources removed:
+  - /subscriptions/.../rg-a/providers/Microsoft.Storage/storageAccounts/oldsa (Microsoft.Storage/storageAccount)
+
+Resources changed:
+  ~ /subscriptions/.../rg-a/providers/Microsoft.Compute/virtualMachines/vm1 (Microsoft.Compute/vm/eastus -> Microsoft.Compute/vm/westus)
+
+Summary: +2 -2 ~1
+```
+
+When the two snapshots are structurally identical, the report is simply:
+
+```
+⚡ Time Rift Report
+No changes detected — the dungeon is unchanged across time.
+Summary: +0 -0 ~0
+```
+
+Every list (rooms added/removed, resources added/removed/changed) is sorted
+by id before printing, so the report is byte-for-byte identical across runs
+regardless of the original enumeration order in either snapshot.
+
+**Exit codes.** `azork crawl --diff` exits `0` after printing the report,
+whether or not differences were found — a diff with changes is not an error.
+It exits non-zero with a clear error message (never a panic or stack trace)
+if either file is missing, unreadable, or is not valid `DungeonMap` JSON
+(e.g. hand-edited or truncated). `azork crawl --snapshot` exits `0` after
+writing the file, and non-zero if the map was partial or the path could not
+be written (e.g. a bad directory).
+
+**Composability.** `--snapshot` runs the normal map-assembly path and can be
+combined with `--out` and/or `--serve` in the same invocation (write HTML,
+write a JSON snapshot, and/or serve — all from one enumeration pass).
+`--diff`, by contrast, needs no enumeration at all: if `--diff` is present it
+takes priority over every other flag (`--backend`, `--serve`, `--out`,
+`--playwright`, `--mock-size`, `--snapshot`) — no backend is contacted and no
+map is built, it only reads the two files named.
 
 ## Command reference
 

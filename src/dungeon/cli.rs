@@ -34,6 +34,15 @@ pub struct CrawlArgs {
     /// `COUNTxPER_GROUP`, with an optional `:<seed>` suffix. Ignored for
     /// non-mock backends.
     pub mock_size: Option<String>,
+    /// `--snapshot <path>` — after assembling the map, write it as pretty
+    /// JSON to `<path>` (in addition to any `--out`/`--serve` handling).
+    /// Refused (no file written) if the assembled map is partial.
+    pub snapshot: Option<String>,
+    /// `--diff <old> <new>` — short-circuits the whole build/backend
+    /// pipeline: reads two previously-written `--snapshot` JSON files,
+    /// diffs them, prints a themed report, and exits. Takes priority over
+    /// every other flag when present.
+    pub diff: Option<(String, String)>,
 }
 
 impl Default for CrawlArgs {
@@ -46,6 +55,8 @@ impl Default for CrawlArgs {
             budget: DEFAULT_BUDGET,
             playwright: false,
             mock_size: None,
+            snapshot: None,
+            diff: None,
         }
     }
 }
@@ -62,6 +73,7 @@ pub fn is_crawl_subcommand(arg: &str) -> bool {
 /// as an unknown flag.
 pub const CRAWL_HELP: &str = r#"azork crawl [--backend <id>] [--serve] [--port <n>] [--out <path>]
             [--budget <n>] [--playwright] [--mock-size <spec>]
+            [--snapshot <path>] [--diff <old> <new>]
 
 Render the Dungeon Crawler map (alias: azork dungeon).
 
@@ -79,6 +91,12 @@ Flags:
                            count, or COUNTxPER_GROUP, optionally suffixed with
                            `:<seed>` (e.g. "large", "200", "200x15:7"). Also settable
                            via AZORK_MOCK_SIZE.
+  --snapshot <path>        write the assembled map as JSON to <path>, for later
+                           `--diff`ing. Refused if the map is partial (cancelled).
+  --diff <old> <new>       compare two `--snapshot` JSON files and print a Time
+                           Rift report of rooms/resources added, removed, and
+                           changed, then exit. Takes priority over every other
+                           flag; no map is built.
   --help, -h               show this help and exit
 "#;
 
@@ -147,6 +165,27 @@ pub fn parse(args: &[String]) -> Result<CrawlArgs, String> {
                         .cloned()
                         .ok_or_else(|| "--mock-size requires a value".to_string())?,
                 );
+            }
+            "--snapshot" => {
+                i += 1;
+                parsed.snapshot = Some(
+                    args.get(i)
+                        .cloned()
+                        .ok_or_else(|| "--snapshot requires a value".to_string())?,
+                );
+            }
+            "--diff" => {
+                i += 1;
+                let old = args
+                    .get(i)
+                    .cloned()
+                    .ok_or_else(|| "--diff requires two values: <old> <new>".to_string())?;
+                i += 1;
+                let new = args
+                    .get(i)
+                    .cloned()
+                    .ok_or_else(|| "--diff requires two values: <old> <new>".to_string())?;
+                parsed.diff = Some((old, new));
             }
             other => return Err(format!("unknown flag '{other}'")),
         }
