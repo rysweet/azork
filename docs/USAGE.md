@@ -68,7 +68,7 @@ Pressing Ctrl-D (EOF) at any prompt ends the session gracefully.
 | `learn <group>` | `discover`, `study` | Introspect `az <group> --help` and grow AzZork's vocabulary at runtime; learned verbs persist across sessions. | `az <group> --help` |
 | `capabilities` | `caps`, `powers`, `spells` | List the `az` capabilities AzZork has learned so far. | — |
 | `recall <query>` | `remember <query>` | Ranked recall over AzZork's persistent graph memory. | — |
-| `friction <note>` | — | Record something confusing or missing to improve later. | — |
+| `friction <note>` | `note`, `gripe` | Record something confusing or missing to improve later. | — |
 | `memory` | `mem`, `recollect` | Summarise what AzZork remembers (rooms, objects, verbs, intents, friction). | — |
 | `help` | `?`, `h` | Show the in-game command list (including learned capabilities). | — |
 | `version` | `ver` | Show the AzZork version. | — |
@@ -88,6 +88,26 @@ discover new powers, or 'help'.
 Once AzZork has learned some `az` capabilities, the same input yields a confident
 match or a "did you mean…" list instead — see
 [Self-evolution](#self-evolution-learn-and-capabilities) below.
+
+#### Free-text arguments (`friction`/`recall`) are captured verbatim
+
+Most commands are parsed by lowercasing the input and stripping filler words
+(`the`, `a`, `an`, `at`, `to`, `into`, `on`, `my`) before matching — fine for
+verbs and object names, but wrong for free-text notes. `friction <note>` and
+`recall <query>` instead capture everything after the verb **verbatim**:
+original case and filler words are preserved. Only the leading verb token is
+removed, and any run of internal whitespace (extra spaces, tabs) is
+collapsed to a single space — leading/trailing whitespace is trimmed.
+
+```
+az> friction the errors are cryptic
+```
+
+records the note exactly as `"the errors are cryptic"` (filler word "the" and
+case preserved) rather than the filler-stripped, lowercased `"errors cryptic"`
+that other commands would produce. An input with only a verb and no
+remaining text (e.g. `friction` alone) is `Unknown`, since there is nothing to
+record or search for.
 
 ### Directions
 
