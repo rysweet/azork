@@ -11,6 +11,7 @@ use azork::capabilities::{autodiscover, registry::default_cache_path, Capability
 use azork::dungeon::{cli as dungeon_cli, map as dungeon_map, playwright, render, server};
 use azork::memory::{default_memory_path, GraphMemory, MemoryKind};
 use azork::parser::{self, Command};
+use azork::quests::builtin_quests;
 use azork::update;
 use azork::world::{GrueOutcome, World};
 use std::io::{self, BufRead, Write};
@@ -53,6 +54,7 @@ const HELP: &str = r#"Commands (Zork verbs -> Azure operations):
   cast deploy [template]  cast a deployment spell (bicep/ARM, mock)
   inventory / i           list resources you are carrying
   score                   report your governance posture (0-100)
+  quest / quests          report progress on the built-in governance quests
   learn <group>           manually refresh 'az <group> --help' (also auto-learned at startup)
   capabilities / caps     list the az capabilities AzZork has learned
   recall <query>          ranked recall over AzZork's persistent memory
@@ -458,6 +460,7 @@ where
         Command::Monitor => println!("{}", world.monitor()),
         Command::Inventory => println!("{}", world.inventory()),
         Command::Score => println!("{}", world.score()),
+        Command::Quest => println!("{}", quests_report(world)),
         Command::Cast(spell) => println!("{}", cast(world, &spell)),
         Command::Learn(group) => {
             println!("{}", learn(registry, memory, runner, cache_path, &group))
@@ -551,6 +554,24 @@ fn capabilities_report(registry: &CapabilityRegistry) -> String {
             registry.help_text()
         )
     }
+}
+
+/// Report progress on the built-in governance quests.
+fn quests_report(world: &World) -> String {
+    let mut out = String::from("Quests:\n");
+    for quest in builtin_quests() {
+        let progress = quest.evaluate(world);
+        let status = if progress.complete {
+            "COMPLETE"
+        } else {
+            "in progress"
+        };
+        out.push_str(&format!(
+            "  - {}: {}/{} resources secured ({}) — {}\n",
+            quest.name, progress.done, progress.total, status, quest.description
+        ));
+    }
+    out.trim_end().to_string()
 }
 
 /// Introspect `az <group> --help`, fold new capabilities into the registry, and

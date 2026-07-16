@@ -27,6 +27,7 @@ fn dispatch(world: &mut World, line: &str) -> String {
         Command::Monitor => world.monitor(),
         Command::Inventory => world.inventory(),
         Command::Score => world.score(),
+        Command::Quest => "quest".to_string(),
         Command::Cast(_) => "cast (mock)".to_string(),
         Command::Learn(g) => format!("learn: {g}"),
         Command::Capabilities => "capabilities".to_string(),

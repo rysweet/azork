@@ -71,6 +71,8 @@ pub enum Command {
     Inventory,
     /// Report governance-posture score.
     Score,
+    /// Report progress on the built-in governance quests.
+    Quest,
     /// Cast a "spell": currently `deploy` (bicep/ARM deployment).
     Cast(String),
     /// Teach AzZork a new az command group by introspecting `az <group> --help`.
@@ -171,6 +173,7 @@ pub fn parse(input: &str) -> Command {
         "monitor" | "light" => Command::Monitor,
         "inventory" | "i" | "inv" => Command::Inventory,
         "score" => Command::Score,
+        "quest" | "quests" => Command::Quest,
         "cast" => {
             if arg.is_empty() {
                 Command::Unknown(input.to_string())

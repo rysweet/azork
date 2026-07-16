@@ -532,6 +532,19 @@ impl World {
         }
     }
 
+    /// All resources across every room and the inventory, in no particular
+    /// order. Read-only; used by the quests module to evaluate progress
+    /// without duplicating hazard-aggregation logic.
+    pub fn all_resources(&self) -> Vec<&Resource> {
+        let mut all: Vec<&Resource> = self
+            .rooms
+            .values()
+            .flat_map(|room| room.resources.iter())
+            .collect();
+        all.extend(self.inventory.iter());
+        all
+    }
+
     /// Total governance hazards across every room and the inventory.
     pub fn total_hazards(&self) -> u32 {
         let room_hazards: u32 = self
