@@ -394,6 +394,20 @@ mod tests {
     }
 
     #[test]
+    fn friction_and_recall_handle_non_ascii_text() {
+        // Regression test: multi-byte UTF-8 characters must not panic or
+        // corrupt the split when computing the verbatim remainder.
+        assert_eq!(
+            parse("friction café ☕ is confusing"),
+            Command::Friction("café ☕ is confusing".to_string())
+        );
+        assert_eq!(
+            parse("recall naïve résumé 日本語"),
+            Command::Recall("naïve résumé 日本語".to_string())
+        );
+    }
+
+    #[test]
     fn direction_from_token() {
         assert_eq!(Direction::from_token("n"), Some(Direction::North));
         assert_eq!(Direction::from_token("east"), Some(Direction::East));
