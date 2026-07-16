@@ -30,14 +30,22 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn read_doc() -> String {
-    fs::read_to_string(repo_root().join("docs/CARL-OIT-CAMPAIGN.md"))
-        .expect("docs/CARL-OIT-CAMPAIGN.md must exist and be UTF-8")
+/// The doc is immutable for the lifetime of the test binary, and every test
+/// reads it independently (each test runs on its own thread), so cache the
+/// contents once instead of re-reading the same small file from disk per
+/// test.
+fn read_doc() -> &'static str {
+    static DOC: OnceLock<String> = OnceLock::new();
+    DOC.get_or_init(|| {
+        fs::read_to_string(repo_root().join("docs/CARL-OIT-CAMPAIGN.md"))
+            .expect("docs/CARL-OIT-CAMPAIGN.md must exist and be UTF-8")
+    })
 }
 
 fn section_body<'a>(doc: &'a str, heading: &str) -> &'a str {
@@ -80,7 +88,7 @@ fn has_round_based_rerun_section() {
 #[test]
 fn round_based_rerun_section_covers_required_obligations() {
     let doc = read_doc();
-    let body = normalized_section_lower(&doc, "## Round-based re-runs");
+    let body = normalized_section_lower(doc, "## Round-based re-runs");
 
     let required_phrases = [
         "baseline",                       // states baseline commit/tag explicitly
@@ -107,14 +115,14 @@ fn round_based_rerun_section_covers_required_obligations() {
 fn round_report_title_is_parameterized_and_canonical() {
     let doc = read_doc();
 
-    let normalized = normalize_whitespace(&doc);
+    let normalized = normalize_whitespace(doc);
     assert!(
         normalized.contains("Carl OIT campaign report (round N) — latest main")
             || normalized.contains("Carl OIT campaign report (round N)"),
         "doc must show the parameterized round-report title template"
     );
 
-    let round_section = normalized_section_lower(&doc, "## Round-based re-runs");
+    let round_section = normalized_section_lower(doc, "## Round-based re-runs");
     assert!(
         round_section.contains("canonical")
             && (round_section.contains("shorthand") || round_section.contains("shorter form")),
@@ -128,7 +136,7 @@ fn round_report_title_is_parameterized_and_canonical() {
 #[test]
 fn campaign_report_section_documents_both_title_forms() {
     let doc = read_doc();
-    let body = section_body(&doc, "## Campaign report\n");
+    let body = section_body(doc, "## Campaign report\n");
 
     assert!(
         body.contains("Carl OIT campaign report"),
@@ -146,7 +154,7 @@ fn campaign_report_section_documents_both_title_forms() {
 #[test]
 fn duplicate_check_policy_does_not_hardcode_single_umbrella_issue() {
     let doc = read_doc();
-    let body = normalized_section_lower(&doc, "## Duplicate-check policy");
+    let body = normalized_section_lower(doc, "## Duplicate-check policy");
 
     assert!(
         body.contains("whichever github issue requested the current run")
@@ -162,7 +170,7 @@ fn duplicate_check_policy_does_not_hardcode_single_umbrella_issue() {
 #[test]
 fn campaign_report_format_references_round_tracking_issue_generically() {
     let doc = read_doc();
-    let body = normalized_section_lower(&doc, "## Campaign report format");
+    let body = normalized_section_lower(doc, "## Campaign report format");
     assert!(
         body.contains("round's own tracking issue") || body.contains("round-based re-runs"),
         "Campaign report format section must reference the round's own tracking issue, \
@@ -192,7 +200,7 @@ fn fix_workstream_dispatch_uses_azork_fix_slug_convention() {
 #[test]
 fn example_report_checklist_lines_are_internally_consistent() {
     let doc = read_doc();
-    let body = section_body(&doc, "## Campaign report format");
+    let body = section_body(doc, "## Campaign report format");
 
     // Extract fenced example lines like:
     // - [ ] #91 REPL: ... — fix: #92 (open)
