@@ -165,34 +165,6 @@ offline in tests with canned `az` output: `cargo test` never calls the real
 [`CapabilityRegistry`]: src/capabilities/registry.rs
 [`IntentResolver`]: src/agent/mod.rs
 
-## Graph memory 🧠
-
-AzZork carries a persistent, ladybug-style **graph memory** — a lightweight
-cognitive-memory model of typed memory nodes with ranked recall — that
-accumulates across sessions:
-
-- **Rooms** (resource groups), **objects** (resources), **verbs** (learned az
-  capabilities), **intents** (free-text you typed), and **friction** notes are
-  all remembered as typed nodes.
-- Memory is saved to `~/.local/share/azork/memory.graph` (override the directory
-  with `AZORK_CACHE_DIR`) and **recalled on the next launch** — the banner shows
-  `[memory: recalled N remembered nodes ...]`.
-- **`recall <query>`** does a ranked recall across everything remembered.
-- **`memory`** summarises counts by kind plus recent notes.
-- **`friction <note>`** records anything confusing or missing so it can be fixed
-  later; unresolved intents are auto-recorded as friction too.
-
-The default memory is a fully in-memory/offline `GraphMemory` store (deterministic,
-line-based persistence, zero deps) so `cargo build`/`cargo test` stay light and
-green. Durable, SQLite-backed persistence over the native `amplihack-memory`
-library is available as an **opt-in companion crate**,
-[`memory-store/`](memory-store/): it mirrors the whole graph (nodes **and** edges)
-into an `amplihack-memory` store, reloads it faithfully across sessions, and offers
-full-text ranked recall through the library's own search engine. Unlike the
-`agent_engine` module (below), it is kept out of the azork package so
-the default build never links a native dependency — see
-[`memory-store/README.md`](memory-store/README.md).
-
 ## Agentic intent resolution
 
 The [`src/agent_engine/`](src/agent_engine/) module depends on and drives the
@@ -352,7 +324,7 @@ Prefer a map to a REPL? `azork crawl` (alias `azork dungeon`) turns your whole
 subscription into a single explorable dungeon map instead of one resource
 group at a time: resource groups become **walled rooms** joined by
 **corridors and doors**, resources appear inside their room as **Microsoft's
-official Azure architecture icons** (bundled offline, never hotlinked), and
+official Azure architecture icons**, and
 shared regions/relationships become the corridors between rooms — drawn on a
 parchment-and-grid background so it reads as a dungeon map, not a graph.
 Rooms scale up automatically to fit however many resources they hold (no
@@ -397,13 +369,6 @@ virtual machine, key vault, Cosmos DB, and more) — see
 ![Resource detail pop-up in the dungeon map](docs/images/crawl-resource-popup.png)
 *Clicking a resource icon pops up its full-size icon, name, type, an "Open in
 Azure Portal" link, and a suggested read-only `az` command to inspect it.*
-
-(Maintainers: these screenshots are captured against a real, running
-`azork crawl --backend az --serve` session with
-[`scripts/capture-real-screenshots.mjs`](scripts/capture-real-screenshots.mjs),
-a Playwright-driven, manual, offline-friendly tool that is never run in CI.
-`scripts/capture-screenshots.sh` remains available for a quick local
-mock-backend smoke test of the renderer.)
 
 It is **strictly read-only** (only `list`/`show`-class `az` calls), uses the
 same `AzRunner` seam as the rest of AzZork, validates resource IDs before
