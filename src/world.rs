@@ -548,6 +548,21 @@ impl World {
         }
     }
 
+    /// Every resource currently known to the world: those sitting in rooms
+    /// (in deterministic, sorted room-name order) plus anything carried in
+    /// the inventory. Used by read-only reporting that needs a stable,
+    /// reproducible scan of the full estate (e.g. quests, achievements).
+    pub fn all_resources(&self) -> Vec<&Resource> {
+        let mut room_names: Vec<&String> = self.rooms.keys().collect();
+        room_names.sort();
+        let mut all: Vec<&Resource> = room_names
+            .into_iter()
+            .flat_map(|name| self.rooms[name].resources.iter())
+            .collect();
+        all.extend(self.inventory.iter());
+        all
+    }
+
     /// Total governance hazards across every room and the inventory.
     pub fn total_hazards(&self) -> u32 {
         let room_hazards: u32 = self
@@ -561,18 +576,6 @@ impl World {
             .sum();
         let inv_hazards: u32 = self.inventory.iter().map(|r| r.hazards()).sum();
         room_hazards + inv_hazards
-    }
-
-    /// All resources across every room (in deterministic, sorted room-name
-    /// order) followed by the inventory — used by hazard-scanning features
-    /// that need a stable, reproducible traversal (e.g. [`World::achievements`]).
-    fn all_resources(&self) -> impl Iterator<Item = &Resource> {
-        let mut room_names: Vec<&String> = self.rooms.keys().collect();
-        room_names.sort();
-        room_names
-            .into_iter()
-            .flat_map(|name| self.rooms[name].resources.iter())
-            .chain(self.inventory.iter())
     }
 
     /// Governance scorecard badges, derived purely from current resource

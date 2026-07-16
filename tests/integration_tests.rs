@@ -33,6 +33,7 @@ fn dispatch(world: &mut World, line: &str) -> String {
             .map(|b| b.name.clone())
             .collect::<Vec<_>>()
             .join(","),
+        Command::Quest => "quest".to_string(),
         Command::Cast(_) => "cast (mock)".to_string(),
         Command::Learn(g) => format!("learn: {g}"),
         Command::Capabilities => "capabilities".to_string(),

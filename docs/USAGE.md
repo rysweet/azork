@@ -64,6 +64,7 @@ Pressing Ctrl-D (EOF) at any prompt ends the session gracefully.
 | `cast deploy [template]` | `deploy [template]` | Cast a deployment spell (mock bicep/ARM). | `az deployment group create` |
 | `inventory` | `i`, `inv` | List the resources you are carrying. | — |
 | `score` | — | Report your governance posture (0–100) and rank. | Governance posture |
+| `quest` | `quests` | View themed governance objectives and per-quest progress. | — |
 | `learn <group>` | `discover`, `study` | Introspect `az <group> --help` and grow AzZork's vocabulary at runtime; learned verbs persist across sessions. | `az <group> --help` |
 | `capabilities` | `caps`, `powers`, `spells` | List the `az` capabilities AzZork has learned so far. | — |
 | `recall <query>` | `remember <query>` | Ranked recall over AzZork's persistent graph memory. | — |
@@ -255,6 +256,52 @@ perfect **100/100 — Cloud Guardian**.
 > spend, so only `resize` clears it. In the default mock estate the `sqlserver`
 > ($800/mo) is the one resource that needs right-sizing as well as locking; do
 > both and a perfect 100/100 run is achievable.
+
+## Quests
+
+`score` gives you a single number; `quest` (alias `quests`) breaks the same
+underlying hazard data into three named, themed objectives so you can see
+*which* category of hazard still needs work:
+
+```
+az> quest
+Quests — governance objectives for this estate:
+
+* Secure the Realm — No resource may face the public internet.
+  4/7 resources secured
+
+* Seal the Vaults — Every resource's data must be encrypted at rest.
+  5/7 resources secured
+
+* Lift the Curse — No resource may be left unlocked and vulnerable.
+  0/7 resources secured
+```
+
+| Quest | Goal | Counts resources where... |
+| --- | --- | --- |
+| **Secure the Realm** | No resource is publicly exposed. | `public == false` |
+| **Seal the Vaults** | Every resource is encrypted at rest. | `encrypted == true` |
+| **Lift the Curse** | No resource is left unlocked. | `locked == true` |
+
+Each quest reports `<done>/<total> resources secured`, counting every resource
+across every room *and* your inventory — the same population `score` derives
+its hazard count from. When `done == total` for a quest, it prints
+`— COMPLETE!` followed by a one-line themed victory message, for example:
+
+```
+* Lift the Curse — No resource may be left unlocked and vulnerable.
+  7/7 resources secured — COMPLETE!
+  The curse is lifted. Every chamber is warded and locked against plunder.
+```
+
+An estate with zero resources reports `0/0` for every quest and is treated as
+vacuously complete (there's nothing left to secure).
+
+Quests are **purely read-only and derived** — running `quest` never changes
+world state, never issues an `az` call, and never invents a hazard `score`
+doesn't already track. `lock <name>` on every hazardous resource is enough to
+complete all three quests. Think of `quest` as `score`'s categorized,
+narrated companion, not a separate game mode.
 
 ## Self-evolution: `learn` and `capabilities`
 

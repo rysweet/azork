@@ -19,6 +19,7 @@ pub const VERSION: &str = match option_env!("AZORK_RELEASE_VERSION") {
 
 pub mod backend;
 pub mod parser;
+pub mod quests;
 pub mod secrets;
 pub mod update;
 pub mod world;
