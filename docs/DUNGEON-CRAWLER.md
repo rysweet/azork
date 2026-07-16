@@ -289,7 +289,10 @@ same one the REPL's `az` backend uses — see
   — westerly regions draw west of easterly ones, northerly regions draw
   north of southerly ones — while resources within a single region keep
   their existing hash-based scatter. Regions not in the table simply get no
-  bias, falling back to the prior hash-only placement.
+  bias, falling back to the prior hash-only placement. (Implementation
+  detail: longitude/latitude are bucketed into coarse 20°-by-20° cells
+  before being applied as bias, so the effect is a rough geographic
+  grouping rather than precise placement.)
 
 The graph is the single source of truth handed to both the native renderer and
 the HTTP server's JSON API — the picture and the API are two views onto the
