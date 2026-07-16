@@ -5,7 +5,7 @@
 //! the world; they only read the same hazard fields `World::score()` already
 //! derives from.
 
-use crate::world::{Resource, World};
+use crate::world::Resource;
 
 /// Progress toward completing a quest: how many resources currently satisfy
 /// the quest's goal out of the total tracked.
@@ -27,9 +27,11 @@ pub struct Quest {
 }
 
 impl Quest {
-    /// Evaluate this quest against the current world state.
-    pub fn evaluate(&self, world: &World) -> QuestProgress {
-        let resources = world.all_resources();
+    /// Evaluate this quest against an already-collected slice of resources.
+    ///
+    /// Callers evaluating multiple quests should collect `World::all_resources()`
+    /// once and reuse the slice, rather than re-deriving it per quest.
+    pub fn evaluate(&self, resources: &[&Resource]) -> QuestProgress {
         let total = resources.len();
         let done = resources.iter().filter(|r| (self.satisfies)(r)).count();
         QuestProgress {
@@ -72,7 +74,7 @@ pub fn builtin_quests() -> Vec<Quest> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::Room;
+    use crate::world::{Room, World};
 
     /// A tiny world with one hazard-laden and one clean resource in a room,
     /// plus a hazard-laden resource in inventory.
@@ -104,19 +106,20 @@ mod tests {
     #[test]
     fn hazard_world_yields_partial_progress() {
         let world = hazard_world();
+        let resources = world.all_resources();
         let quests = builtin_quests();
 
-        let secure = quests[0].evaluate(&world);
+        let secure = quests[0].evaluate(&resources);
         assert_eq!(secure.done, 1); // only sound-vm is non-public
         assert_eq!(secure.total, 2);
         assert!(!secure.complete);
 
-        let vaults = quests[1].evaluate(&world);
+        let vaults = quests[1].evaluate(&resources);
         assert_eq!(vaults.done, 1); // only sound-vm is encrypted
         assert_eq!(vaults.total, 2);
         assert!(!vaults.complete);
 
-        let curse = quests[2].evaluate(&world);
+        let curse = quests[2].evaluate(&resources);
         assert_eq!(curse.done, 1); // only sound-vm is locked
         assert_eq!(curse.total, 2);
         assert!(!curse.complete);
@@ -135,9 +138,10 @@ mod tests {
             monthly_cost: 5,
         });
         let world = World::new(vec![room], "hall", "test-sub").unwrap();
+        let resources = world.all_resources();
 
         for quest in builtin_quests() {
-            let progress = quest.evaluate(&world);
+            let progress = quest.evaluate(&resources);
             assert!(
                 progress.complete,
                 "quest '{}' should be complete",
@@ -151,8 +155,9 @@ mod tests {
     fn empty_world_is_vacuously_complete() {
         let room = Room::new("hall", "An empty hall.", "eastus", true);
         let world = World::new(vec![room], "hall", "test-sub").unwrap();
+        let resources = world.all_resources();
         for quest in builtin_quests() {
-            let progress = quest.evaluate(&world);
+            let progress = quest.evaluate(&resources);
             assert_eq!(progress.total, 0);
             assert!(progress.complete);
         }

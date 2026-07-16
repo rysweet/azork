@@ -584,8 +584,11 @@ fn achievements_report(world: &World) -> String {
 /// Render progress for every built-in quest against the current world state.
 fn quests_report(world: &World) -> String {
     let mut out = String::from("Quests — governance objectives for this estate:\n");
+    // Collect resources once and reuse across all quests instead of
+    // re-deriving the same Vec<&Resource> on every evaluation.
+    let resources = world.all_resources();
     for quest in builtin_quests() {
-        let progress = quest.evaluate(world);
+        let progress = quest.evaluate(&resources);
         out.push_str(&format!(
             "\n* {} — {}\n  {}/{} resources secured",
             quest.name, quest.description, progress.done, progress.total
