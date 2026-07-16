@@ -876,6 +876,42 @@ mod tests {
     use azork::backend::{mock::MockBackend, Backend};
 
     #[test]
+    fn achievements_report_renders_locked_badges_with_blocker_text() {
+        let world = MockBackend::new().build_world().unwrap();
+        let out = achievements_report(&world);
+        assert!(out.starts_with("Governance posture:"));
+        assert!(out.contains("Achievements:"));
+        // A fresh mock world has outstanding hazards, so at least one badge
+        // must render as locked with its "locked: <reason>" blocker text.
+        assert!(out.contains("[ ]"));
+        assert!(out.contains("locked:"));
+    }
+
+    #[test]
+    fn achievements_report_renders_earned_badges_with_checkmarks() {
+        use azork::world::{Resource, Room, World};
+
+        let mut resource = Resource::new(
+            "storage",
+            "Microsoft.Storage/storageAccounts",
+            "A well-governed store.",
+        );
+        resource.locked = true;
+        resource.encrypted = true;
+        resource.public = false;
+        resource.monthly_cost = 10;
+        let room = Room::new("rg", "A tidy room.", "eastus", true).with_resource(resource);
+        let world = World::new(vec![room], "rg", "sub-test").unwrap();
+
+        let out = achievements_report(&world);
+        assert!(out.contains("[x] 🔐 Fort Knox"));
+        assert!(out.contains("[x] 🚪 No Open Doors"));
+        assert!(out.contains("[x] 🛡️ Warded"));
+        assert!(out.contains("[x] 💰 Under Budget"));
+        assert!(!out.contains("[ ]"));
+    }
+
+    #[test]
     fn cast_deploy_is_mock_safe() {
         let w = MockBackend::new().build_world().unwrap();
         let out = cast(&w, "deploy");
