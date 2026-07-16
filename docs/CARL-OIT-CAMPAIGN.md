@@ -92,6 +92,49 @@ they cannot collide on files or branch state. Every fix is expected to:
 - Go through the project's normal PR review; a campaign run opens PRs but
   does not merge them itself.
 
+## Round-based re-runs
+
+Carl is not a one-shot audit: it is re-run periodically against the latest
+`main` as the product evolves, and each run is numbered (`round 1`,
+`round 2`, ...) so its scope and report are unambiguous. A round-N run:
+
+1. **States its baseline explicitly.** The task description names the commit
+   (or tag) the previous round ended on and the commit/tag the new round
+   starts from, e.g. "round 2 against `7e99d55` (v0.7.0), since round 1
+   ended at `cd9fa22`".
+2. **Re-tests every product surface fresh**, not just the surfaces touched by
+   PRs merged since the previous round — a regression can appear anywhere,
+   not only in recently-changed code.
+3. **Explicitly re-verifies each PR merged since the previous round** against
+   the specific claim in its description (e.g. "adaptive room sizing: every
+   room's grid allocation is `>= 1` cell per resource, no overflow" for a
+   room-sizing PR, or "the CLI flag and its equivalent env vars agree on the
+   same synthetic tenant shape for a given seed" for a sized-mock-backend
+   PR), and records pass/fail evidence for each one by name in the round's
+   report, not just a generic "looks fine."
+4. **Re-verifies the status of previously filed findings** rather than
+   trusting their GitHub state at face value: an issue that is open may
+   already be fixed on `main` (close it, with fresh evidence, rather than
+   leaving it open) and an issue that is closed may have regressed (reopen
+   it, with fresh evidence, rather than silently re-filing a duplicate).
+5. **Never re-files a duplicate of a still-open, already-triaged finding**
+   from an earlier round; it references the existing issue number instead
+   (see "Duplicate-check policy").
+6. **Names its report issue with the round number**, e.g. `Carl OIT campaign
+   report (round 2) — latest main`, and that report links every issue filed
+   in *this* round plus every fix PR opened in response, and separately
+   calls out the explicit re-verification notes from step 3 and 4 above so a
+   reader can see, at a glance, what was newly found versus what was
+   re-confirmed. This full title is the canonical report-issue title; a
+   shorter form like "Carl round-2 report issue" may appear in task
+   descriptions or cross-references as shorthand for the same issue, but the
+   report issue itself should use the full, parameterized title above so the
+   round number and baseline are unambiguous from the title alone.
+7. **References the round's own tracking issue** (the GitHub issue that
+   requested this specific round, e.g. `#72` for round 2) as the report's
+   parent/umbrella issue — each round has its own tracking issue, so this is
+   not a fixed number across rounds.
+
 ## Re-testing and exit criteria
 
 After a fix lands (merged, or its PR is open and green), the affected product
@@ -103,10 +146,12 @@ regressions. The test → file → fix → re-test loop continues until either:
 
 ## Campaign report
 
-Each campaign produces a single consolidated report issue (titled
-"Carl OIT campaign report") that links every `carl-oit` issue filed during the
-run and every fix PR opened in response, plus a final verification note once
-those fixes have been merged and re-tested against `main`.
+Each campaign produces a single consolidated report issue, titled
+`Carl OIT campaign report` for a first run or `Carl OIT campaign report
+(round N) — latest main` for round N of a re-run (see "Round-based
+re-runs"), that links every `carl-oit` issue filed during the run and every
+fix PR opened in response, plus a final verification note once those fixes
+have been merged and re-tested against `main`.
 
 ## Harness scripts
 
@@ -208,10 +253,11 @@ new number:
 - **#16** (update TOCTOU) — open; referenced, not re-filed.
 - **#45** (sibling secret-detector audit) — open; referenced, not re-filed.
 
-This campaign's own tracking work is filed under **#66** (the umbrella
-issue for the OIT harness/tooling build), which the campaign report should
-cross-reference as its parent issue rather than treat as a `carl-oit`
-finding.
+This campaign's own tracking work is filed under whichever GitHub issue
+requested the current run (e.g. **#66** for the harness/tooling build that
+produced round 1, **#72** for round 2's re-run), which the campaign report
+should cross-reference as its parent issue rather than treat as a
+`carl-oit` finding.
 
 ## Severity taxonomy (applied consistently)
 
@@ -250,12 +296,13 @@ without any live-Azure cost or risk.
 
 Each confirmed, filed finding is fixed by launching an independent
 dev-orchestrator workstream as its own subprocess, in its own fresh clone
-under `/home/azureuser/src/<bugname>-fix` (never under any other user's home
-directory), so parallel fixes for unrelated findings can never collide on
-files, branch state, or build artifacts:
+under `/home/azureuser/src/azork-fix-<slug>` (never reusing the campaign's
+own testing worktree, and never under any other user's home directory), so
+parallel fixes for unrelated findings can never collide on files, branch
+state, or build artifacts:
 
 ```
-cd /home/azureuser/src/<bugname>-fix && \
+cd /home/azureuser/src/azork-fix-<slug> && \
   env -u CLAUDECODE AMPLIHACK_HOME=/home/azureuser/.amplihack \
   amplihack recipe run \
   /home/azureuser/.amplihack/amplifier-bundle/recipes/smart-orchestrator.yaml \
@@ -281,17 +328,17 @@ The consolidated report issue's body is a markdown checklist, one line per
 finding, so campaign status is readable at a glance:
 
 ```
-- [ ] #71 REPL: empty-line input after `learn` panics — fix: #72 (open)
-- [x] #68 crawl --serve: adaptive room sizing overflows at >40 resources/RG — fix: #70 (merged)
+- [ ] #91 REPL: empty-line input after `learn` panics — fix: #92 (open)
+- [x] #88 crawl --serve: adaptive room sizing overflows at >40 resources/RG — fix: #90 (merged)
 - [ ] #8 (verified fixed, not reopened): #61 parallel enumeration confirmed via --mock-size large timing
 ```
 
 Each line links the finding issue and, once one exists, its fix PR, plus a
 short status word (`open`, `merged-pending-review`, `merged`, `wont-fix`). No
 additional labels beyond `carl-oit` are introduced for report bookkeeping.
-The report issue itself references **#66** as its parent/umbrella issue
-(the harness-build task that produced this campaign tooling), not as a
-`carl-oit` finding.
+The report issue itself references the round's own tracking issue (see
+"Round-based re-runs") as its parent/umbrella issue, not as a `carl-oit`
+finding.
 
 ## Relationship to `azork-oit`
 
