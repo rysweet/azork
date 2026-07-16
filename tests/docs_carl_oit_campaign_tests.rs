@@ -45,7 +45,7 @@ fn section_body<'a>(doc: &'a str, heading: &str) -> &'a str {
         .find(heading)
         .unwrap_or_else(|| panic!("expected to find heading {heading:?}"));
     let after = &doc[start + heading.len()..];
-    let end = after.find("\n## ").map(|i| i).unwrap_or(after.len());
+    let end = after.find("\n## ").unwrap_or(after.len());
     &after[..end]
 }
 
@@ -55,6 +55,14 @@ fn section_body<'a>(doc: &'a str, heading: &str) -> &'a str {
 /// to single spaces before doing substring checks that span line wraps.
 fn normalize_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Most phrase-containment checks below don't care about line wrapping or
+/// letter case; they just want "does this section mention X". Combine
+/// `section_body` + `normalize_whitespace` + lowercasing into a single
+/// helper so each test doesn't have to repeat the same three-step pipeline.
+fn normalized_section_lower(doc: &str, heading: &str) -> String {
+    normalize_whitespace(section_body(doc, heading)).to_lowercase()
 }
 
 /// Requirement 1: a top-level "Round-based re-runs" section exists.
@@ -72,7 +80,7 @@ fn has_round_based_rerun_section() {
 #[test]
 fn round_based_rerun_section_covers_required_obligations() {
     let doc = read_doc();
-    let body = normalize_whitespace(&section_body(&doc, "## Round-based re-runs")).to_lowercase();
+    let body = normalized_section_lower(&doc, "## Round-based re-runs");
 
     let required_phrases = [
         "baseline",                       // states baseline commit/tag explicitly
@@ -106,8 +114,7 @@ fn round_report_title_is_parameterized_and_canonical() {
         "doc must show the parameterized round-report title template"
     );
 
-    let round_section =
-        normalize_whitespace(&section_body(&doc, "## Round-based re-runs")).to_lowercase();
+    let round_section = normalized_section_lower(&doc, "## Round-based re-runs");
     assert!(
         round_section.contains("canonical")
             && (round_section.contains("shorthand") || round_section.contains("shorter form")),
@@ -139,8 +146,7 @@ fn campaign_report_section_documents_both_title_forms() {
 #[test]
 fn duplicate_check_policy_does_not_hardcode_single_umbrella_issue() {
     let doc = read_doc();
-    let body =
-        normalize_whitespace(&section_body(&doc, "## Duplicate-check policy")).to_lowercase();
+    let body = normalized_section_lower(&doc, "## Duplicate-check policy");
 
     assert!(
         body.contains("whichever github issue requested the current run")
@@ -156,8 +162,7 @@ fn duplicate_check_policy_does_not_hardcode_single_umbrella_issue() {
 #[test]
 fn campaign_report_format_references_round_tracking_issue_generically() {
     let doc = read_doc();
-    let body =
-        normalize_whitespace(&section_body(&doc, "## Campaign report format")).to_lowercase();
+    let body = normalized_section_lower(&doc, "## Campaign report format");
     assert!(
         body.contains("round's own tracking issue") || body.contains("round-based re-runs"),
         "Campaign report format section must reference the round's own tracking issue, \
