@@ -548,6 +548,19 @@ impl World {
         }
     }
 
+    /// Every resource currently known to the world: those sitting in rooms
+    /// plus anything carried in the inventory. Used by read-only reporting
+    /// (e.g. quests) that needs to scan the full estate.
+    pub fn all_resources(&self) -> Vec<&Resource> {
+        let mut all: Vec<&Resource> = self
+            .rooms
+            .values()
+            .flat_map(|room| room.resources.iter())
+            .collect();
+        all.extend(self.inventory.iter());
+        all
+    }
+
     /// Total governance hazards across every room and the inventory.
     pub fn total_hazards(&self) -> u32 {
         let room_hazards: u32 = self
