@@ -11,3 +11,6 @@ node_modules/
 
 # amplihack / session runtime state (not project code)
 .claude/runtime/
+
+# git worktrees used for parallel fix workstreams (not project code)
+/worktrees/
