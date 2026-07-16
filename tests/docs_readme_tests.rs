@@ -228,6 +228,63 @@ fn crawl_screenshots_exist_on_disk() {
     }
 }
 
+/// Regression test for issue #80: the README must not present the curl
+/// one-line installer / `azork update` as unconditionally working while this
+/// repository has zero published GitHub Releases. A clear "no release yet,
+/// build from source" note must appear directly above the curl one-liner in
+/// the Install section, and it must not have been silently dropped.
+///
+/// This does not check the GitHub API (that would make tests flaky/networked
+/// and would trivially pass again once a release exists, silently losing
+/// this drift-catching coverage the moment it stops mattering) — it locks in
+/// the doc structure this PR introduces so a future edit can't strip the
+/// warning without a test failure calling it out.
+#[test]
+fn readme_install_section_warns_about_missing_release_before_curl_oneliner() {
+    let readme = read_readme();
+
+    let install_idx = readme
+        .find("\n## Install\n")
+        .expect("README.md must contain an '## Install' section");
+    let curl_idx = readme[install_idx..]
+        .find("curl -fsSL https://raw.githubusercontent.com/rysweet/azork/main/install.sh | sh\n")
+        .map(|i| i + install_idx)
+        .expect("Install section must contain the curl one-liner");
+
+    let preceding = &readme[install_idx..curl_idx];
+    let preceding_lower = preceding.to_lowercase();
+    assert!(
+        preceding_lower.contains("no github release has been published"),
+        "README Install section must warn, directly above the curl one-liner, \
+         that no GitHub Release has been published yet"
+    );
+    assert!(
+        preceding_lower.contains("build from source"),
+        "README Install section's pre-installer note must point readers at \
+         building from source as the currently-working alternative"
+    );
+}
+
+/// Companion check for `docs/INSTALL.md`: it must carry the same warning
+/// directly above its own curl one-liner, so a reader landing there via the
+/// "full Install guide" link isn't misled either.
+#[test]
+fn install_guide_warns_about_missing_release_before_curl_oneliner() {
+    let install_doc = fs::read_to_string(repo_root().join("docs/INSTALL.md"))
+        .expect("docs/INSTALL.md must exist and be UTF-8");
+
+    let curl_idx = install_doc
+        .find("curl -fsSL https://raw.githubusercontent.com/rysweet/azork/main/install.sh | sh\n")
+        .expect("docs/INSTALL.md must contain the curl one-liner");
+
+    let preceding = install_doc[..curl_idx].to_lowercase();
+    assert!(
+        preceding.contains("no github release has been published"),
+        "docs/INSTALL.md must warn, directly above the curl one-liner, that no \
+         GitHub Release has been published yet"
+    );
+}
+
 /// Requirement 4 (continued): ... and are actually embedded, in order, in
 /// the README's Dungeon Crawler Mode section.
 #[test]

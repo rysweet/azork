@@ -186,10 +186,17 @@ to check out side-by-side.
 
 ## Install
 
-The fastest way to get `azork` is the one-line installer, which downloads a
-prebuilt binary from the latest [GitHub Release](https://github.com/rysweet/azork/releases),
-verifies its SHA-256 checksum, and installs it to your `PATH` — no Rust
-toolchain required:
+Once published, the fastest way to get `azork` will be the one-line
+installer, which downloads a prebuilt binary from the latest
+[GitHub Release](https://github.com/rysweet/azork/releases), verifies its
+SHA-256 checksum, and installs it to your `PATH` — no Rust toolchain
+required:
+
+> **Note:** no GitHub Release has been published yet, so the commands below
+> will fail with a 404 until one is cut (the in-product `azork update`
+> self-updater fails the same way). Until then, use
+> [Alternative: build from source](#alternative-build-from-source) below —
+> it's the only currently-working install path.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rysweet/azork/main/install.sh | sh

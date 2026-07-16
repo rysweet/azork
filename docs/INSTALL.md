@@ -7,7 +7,13 @@ the [README → Install](../README.md#install) section.
 - Already installed and want to stay current? See the [Self-Update guide](UPDATING.md).
 - Building or cutting releases yourself? See the [Development guide](DEVELOPMENT.md).
 
-## Quick install (recommended)
+## Quick install (recommended once a release exists)
+
+> **Note:** no GitHub Release has been published for this repository yet, so
+> the one-liner below will fail with a 404 (and `azork update` will fail the
+> same way). Until a release is cut, use
+> [Build from source with Cargo](#build-from-source-with-cargo-no-cratesio-publish-required)
+> instead.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rysweet/azork/main/install.sh | sh
