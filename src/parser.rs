@@ -1,9 +1,16 @@
 //! Command parser for the AzZork text adventure.
 //!
 //! Turns a raw line of player input into a structured [`Command`]. The parser is
-//! deliberately forgiving: it lowercases input, strips filler words ("the", "a",
-//! "an", "at", "to"), and understands common Zork-style aliases (e.g. bare
-//! directions like `north`, or `l` for `look`).
+//! deliberately forgiving: for the purposes of *dispatch* (deciding which verb
+//! was used, and resolving simple single-target arguments like `examine the
+//! webstore` -> `examine webstore`) it lowercases the input and strips filler
+//! words ("the", "a", "an", "at", "to", "into", "on", "my"), and understands
+//! common Zork-style aliases (e.g. bare directions like `north`, or `l` for
+//! `look`). Free-text arguments (currently [`Command::Friction`] and
+//! [`Command::Recall`]) are the exception: their captured text is the
+//! verbatim substring of the player's original input (original case, filler
+//! words intact) with only the leading verb token removed, so notes and
+//! queries are never silently corrupted.
 
 /// A compass / topology direction used to navigate the Azure "dungeon".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -102,6 +109,17 @@ pub enum Command {
 /// Filler words that are stripped before interpreting a command.
 const FILLER: &[&str] = &["the", "a", "an", "at", "to", "into", "on", "my"];
 
+/// Returns the verbatim remainder of `input` after its first whitespace-
+/// separated token (the verb), preserving original case and filler words.
+/// Used for free-text arguments (e.g. [`Command::Friction`],
+/// [`Command::Recall`]) that must not be mangled by dispatch-only
+/// lowercasing/filler-stripping.
+fn verbatim_remainder(input: &str) -> String {
+    let mut words = input.split_whitespace();
+    words.next(); // skip the verb token
+    words.collect::<Vec<_>>().join(" ")
+}
+
 /// Parse a raw input line into a [`Command`].
 pub fn parse(input: &str) -> Command {
     let lowered = input.to_lowercase();
@@ -118,6 +136,9 @@ pub fn parse(input: &str) -> Command {
     let verb = tokens[0].as_str();
     let rest: Vec<String> = tokens[1..].to_vec();
     let arg = rest.join(" ");
+    // Verbatim (original-case, filler-preserving) text after the verb token,
+    // for free-text argument commands like Friction/Recall.
+    let verbatim_arg = verbatim_remainder(input);
 
     // A bare direction ("north", "n") is shorthand for "go north".
     if let Some(dir) = Direction::from_token(verb) {
@@ -195,17 +216,17 @@ pub fn parse(input: &str) -> Command {
         }
         "capabilities" | "caps" | "powers" | "spells" => Command::Capabilities,
         "friction" | "note" | "gripe" => {
-            if arg.is_empty() {
+            if verbatim_arg.is_empty() {
                 Command::Unknown(input.to_string())
             } else {
-                Command::Friction(arg)
+                Command::Friction(verbatim_arg)
             }
         }
         "recall" | "remember" => {
-            if arg.is_empty() {
+            if verbatim_arg.is_empty() {
                 Command::Unknown(input.to_string())
             } else {
-                Command::Recall(arg)
+                Command::Recall(verbatim_arg)
             }
         }
         "memory" | "mem" | "recollect" => Command::Memory,
@@ -376,9 +397,12 @@ mod tests {
             parse("friction help is confusing"),
             Command::Friction("help is confusing".to_string())
         );
+        // The verb ("note") is stripped, but the remaining free text is kept
+        // verbatim -- including filler words like "the" -- since it is not
+        // used for dispatch.
         assert_eq!(
             parse("note the errors are cryptic"),
-            Command::Friction("errors are cryptic".to_string())
+            Command::Friction("the errors are cryptic".to_string())
         );
         assert_eq!(
             parse("recall storage"),
@@ -388,6 +412,29 @@ mod tests {
         assert_eq!(parse("mem"), Command::Memory);
         assert!(matches!(parse("friction"), Command::Unknown(_)));
         assert!(matches!(parse("recall"), Command::Unknown(_)));
+    }
+
+    #[test]
+    fn friction_and_recall_preserve_verbatim_free_text() {
+        // Regression test for #79: filler-word stripping and forced
+        // lowercasing must never corrupt the free-text argument captured by
+        // Friction/Recall -- only the leading verb token is removed.
+        assert_eq!(
+            parse("friction this is a test note"),
+            Command::Friction("this is a test note".to_string())
+        );
+        assert_eq!(
+            parse("friction a cat sat on a mat"),
+            Command::Friction("a cat sat on a mat".to_string())
+        );
+        assert_eq!(
+            parse("friction I am a robot"),
+            Command::Friction("I am a robot".to_string())
+        );
+        assert_eq!(
+            parse("recall Some MixedCase Query"),
+            Command::Recall("Some MixedCase Query".to_string())
+        );
     }
 
     #[test]
