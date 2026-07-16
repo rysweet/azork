@@ -135,22 +135,20 @@ fn require_arg(arg: String, input: &str, ctor: fn(String) -> Command) -> Command
 /// Parse a raw input line into a [`Command`].
 pub fn parse(input: &str) -> Command {
     let lowered = input.to_lowercase();
-    let tokens: Vec<String> = lowered
+    // Borrow tokens from `lowered` instead of allocating a new String per
+    // token; `rest` below is a plain slice, avoiding a second Vec clone.
+    let tokens: Vec<&str> = lowered
         .split_whitespace()
         .filter(|t| !FILLER.contains(t))
-        .map(|t| t.to_string())
         .collect();
 
     if tokens.is_empty() {
         return Command::Empty;
     }
 
-    let verb = tokens[0].as_str();
-    let rest: Vec<String> = tokens[1..].to_vec();
+    let verb = tokens[0];
+    let rest = &tokens[1..];
     let arg = rest.join(" ");
-    // Verbatim (original-case, filler-preserving) text after the verb token,
-    // for free-text argument commands like Friction/Recall.
-    let verbatim_arg = verbatim_remainder(input);
 
     // A bare direction ("north", "n") is shorthand for "go north".
     if let Some(dir) = Direction::from_token(verb) {
@@ -160,7 +158,7 @@ pub fn parse(input: &str) -> Command {
     match verb {
         "look" | "l" => Command::Look,
         "examine" | "x" | "inspect" | "show" => require_arg(arg, input, Command::Examine),
-        "go" | "move" | "walk" => match rest.first().and_then(|t| Direction::from_token(t)) {
+        "go" | "move" | "walk" => match rest.first().copied().and_then(Direction::from_token) {
             Some(dir) => Command::Go(dir),
             None => Command::Unknown(input.to_string()),
         },
@@ -181,8 +179,12 @@ pub fn parse(input: &str) -> Command {
         "deploy" => Command::Cast(format!("deploy {}", arg).trim().to_string()),
         "learn" | "discover" | "study" => require_arg(arg, input, Command::Learn),
         "capabilities" | "caps" | "powers" | "spells" => Command::Capabilities,
-        "friction" | "note" | "gripe" => require_arg(verbatim_arg, input, Command::Friction),
-        "recall" | "remember" => require_arg(verbatim_arg, input, Command::Recall),
+        // Verbatim (original-case, filler-preserving) text after the verb
+        // token; computed lazily here since only Friction/Recall need it.
+        "friction" | "note" | "gripe" => {
+            require_arg(verbatim_remainder(input), input, Command::Friction)
+        }
+        "recall" | "remember" => require_arg(verbatim_remainder(input), input, Command::Recall),
         "memory" | "mem" | "recollect" => Command::Memory,
         "help" | "?" | "h" => Command::Help,
         "version" | "ver" => Command::Version,
