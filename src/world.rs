@@ -566,15 +566,13 @@ impl World {
     /// All resources across every room (in deterministic, sorted room-name
     /// order) followed by the inventory — used by hazard-scanning features
     /// that need a stable, reproducible traversal (e.g. [`World::achievements`]).
-    fn all_resources(&self) -> Vec<&Resource> {
+    fn all_resources(&self) -> impl Iterator<Item = &Resource> {
         let mut room_names: Vec<&String> = self.rooms.keys().collect();
         room_names.sort();
-        let mut out: Vec<&Resource> = Vec::new();
-        for name in room_names {
-            out.extend(self.rooms[name].resources.iter());
-        }
-        out.extend(self.inventory.iter());
-        out
+        room_names
+            .into_iter()
+            .flat_map(|name| self.rooms[name].resources.iter())
+            .chain(self.inventory.iter())
     }
 
     /// Governance scorecard badges, derived purely from current resource
@@ -583,20 +581,36 @@ impl World {
     /// Exactly four badges by design — this is a thin prototype, not a
     /// general achievement framework. Each locked badge names the first
     /// offending resource so the player knows what to fix.
+    ///
+    /// Scans the resource list once (not once per badge), stopping as soon
+    /// as a blocker has been found for all four badges.
     pub fn achievements(&self) -> Vec<Achievement> {
-        let resources = self.all_resources();
+        let mut fort_knox_blocker: Option<String> = None;
+        let mut no_open_doors_blocker: Option<String> = None;
+        let mut warded_blocker: Option<String> = None;
+        let mut under_budget_blocker: Option<String> = None;
 
-        let first_blocker = |pred: fn(&Resource) -> bool, reason: &str| -> Option<String> {
-            resources
-                .iter()
-                .find(|r| pred(r))
-                .map(|r| format!("{} is {}", r.name, reason))
-        };
-
-        let fort_knox_blocker = first_blocker(|r| !r.encrypted, "unencrypted");
-        let no_open_doors_blocker = first_blocker(|r| r.public, "public");
-        let warded_blocker = first_blocker(|r| !r.locked, "unlocked");
-        let under_budget_blocker = first_blocker(|r| r.monthly_cost >= 500, "over budget");
+        for r in self.all_resources() {
+            if fort_knox_blocker.is_none() && !r.encrypted {
+                fort_knox_blocker = Some(format!("{} is unencrypted", r.name));
+            }
+            if no_open_doors_blocker.is_none() && r.public {
+                no_open_doors_blocker = Some(format!("{} is public", r.name));
+            }
+            if warded_blocker.is_none() && !r.locked {
+                warded_blocker = Some(format!("{} is unlocked", r.name));
+            }
+            if under_budget_blocker.is_none() && r.monthly_cost >= 500 {
+                under_budget_blocker = Some(format!("{} is over budget", r.name));
+            }
+            if fort_knox_blocker.is_some()
+                && no_open_doors_blocker.is_some()
+                && warded_blocker.is_some()
+                && under_budget_blocker.is_some()
+            {
+                break;
+            }
+        }
 
         vec![
             Achievement {
