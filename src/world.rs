@@ -815,6 +815,19 @@ mod tests {
     }
 
     #[test]
+    fn all_resources_aggregates_rooms_and_inventory() {
+        let mut w = tiny_world();
+        // tiny_world has exactly one resource (storage) in prod-rg, none in dark-rg.
+        assert_eq!(w.all_resources().len(), 1);
+        assert_eq!(w.all_resources()[0].name, "storage");
+
+        // Taking it moves it into inventory but the total count is unchanged.
+        w.take("storage");
+        assert_eq!(w.all_resources().len(), 1);
+        assert_eq!(w.all_resources()[0].name, "storage");
+    }
+
+    #[test]
     fn examine_reports_status() {
         let w = tiny_world();
         let out = w.examine("storage");

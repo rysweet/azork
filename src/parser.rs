@@ -325,6 +325,13 @@ mod tests {
     }
 
     #[test]
+    fn quest_aliases() {
+        assert_eq!(parse("quest"), Command::Quest);
+        assert_eq!(parse("quests"), Command::Quest);
+        assert_eq!(parse("QUEST"), Command::Quest);
+    }
+
+    #[test]
     fn cast_deploy() {
         assert_eq!(parse("cast deploy"), Command::Cast("deploy".to_string()));
         assert_eq!(
