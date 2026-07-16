@@ -112,6 +112,7 @@ monitor / light         enable monitoring here (banish the Grue)
 cast deploy [template]  cast a deployment spell (bicep/ARM, mock)
 inventory / i           list resources you are carrying
 score                   report your governance posture (0-100)
+achievements / badges   show your governance scorecard (score + badges)
 learn <group>           manually refresh/relearn 'az <group> --help' (auto-discovered at startup too)
 capabilities / caps     list the az capabilities AzZork has learned so far
 recall <query>          ranked recall over AzZork's persistent graph memory
@@ -164,6 +165,51 @@ offline in tests with canned `az` output: `cargo test` never calls the real
 
 [`CapabilityRegistry`]: src/capabilities/registry.rs
 [`IntentResolver`]: src/agent/mod.rs
+
+## Achievements 🏅
+
+On top of the numeric `score`, AzZork keeps a small **governance scorecard**:
+four badges, computed purely from the hazard state of the resources currently
+in your dungeon (the same public/encrypted/locked/cost fields that drive
+`score` and the Grue checks). There's no separate save file, XP counter, or
+config — badges are a pure, deterministic function of the current `World`, so
+they always match what `look`/`examine` show you right now, and re-running
+`achievements` twice without taking any action always prints the same thing.
+
+Run it with either `achievements` or `badges`:
+
+```
+az> achievements
+Governance posture: 75/100  —  rank: Diligent Steward
+Outstanding hazards: 1 (public/unencrypted/unlocked resources, cost overruns, unmonitored rooms)
+Moves taken: 3
+
+Achievements:
+  [x] 🔐 Fort Knox — Every resource encrypted at rest.
+  [ ] 🚪 No Open Doors — locked: webstore is public
+  [x] 🛡️ Warded — Every resource protected by a management lock.
+  [x] 💰 Under Budget — No resource is running a cost overrun.
+```
+
+Each line is either `[x]` (earned) or `[ ] ... — locked: <reason>`, where the
+reason names the *first* offending resource (in stable, sorted room order) so
+you know exactly what to fix next. Once you `lock`/harden that resource, the
+badge flips to earned on your next `achievements` call — no extra step needed.
+
+The four badges:
+
+| Badge | Emoji | Earned when… |
+|---|---|---|
+| **Fort Knox** | 🔐 | every resource has encryption at rest enabled |
+| **No Open Doors** | 🚪 | no resource is exposed to the public internet |
+| **Warded** | 🛡️ | every resource is protected by a management lock |
+| **Under Budget** | 💰 | no resource is running a cost overrun |
+
+This list is intentionally capped at four — it's a thin scorecard layered on
+the existing hazard model, not a general achievements/XP framework. There is
+no persistence beyond the in-memory `World`: badges reset with a new session
+just like the rest of your dungeon state, and offline/mock backends behave
+identically to any other run since achievements never touch the network.
 
 ## Agentic intent resolution
 
