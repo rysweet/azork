@@ -475,15 +475,17 @@ fn region_bias(region: &str) -> (i32, i32) {
 /// scattered across a mostly-empty parchment; any collisions this creates
 /// between unrelated rooms are resolved afterwards by
 /// [`resolve_room_collisions`].
+const WING_SIZE: i32 = 6;
+
 fn deterministic_position(name: &str, region: &str) -> (i32, i32) {
     let mut hasher = DefaultHasher::new();
     (name, region).hash(&mut hasher);
     let h = hasher.finish();
-    let fine_x = ((h & 0xFFFF) % 6) as i32;
-    let fine_y = (((h >> 16) & 0xFFFF) % 6) as i32;
+    let fine_x = ((h & 0xFFFF) % WING_SIZE as u64) as i32;
+    let fine_y = (((h >> 16) & 0xFFFF) % WING_SIZE as u64) as i32;
 
     let (bias_x, bias_y) = region_bias(region);
-    (bias_x * 6 + fine_x, bias_y * 6 + fine_y)
+    (bias_x * WING_SIZE + fine_x, bias_y * WING_SIZE + fine_y)
 }
 
 /// Resolve any rooms whose hash-derived [`deterministic_position`] collided
@@ -630,7 +632,10 @@ mod region_geography_tests {
         let mut hasher = DefaultHasher::new();
         (name, region).hash(&mut hasher);
         let h = hasher.finish();
-        let expected = (((h & 0xFFFF) % 6) as i32, (((h >> 16) & 0xFFFF) % 6) as i32);
+        let expected = (
+            ((h & 0xFFFF) % WING_SIZE as u64) as i32,
+            (((h >> 16) & 0xFFFF) % WING_SIZE as u64) as i32,
+        );
         assert_eq!(deterministic_position(name, region), expected);
     }
 
