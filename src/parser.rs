@@ -120,6 +120,18 @@ fn verbatim_remainder(input: &str) -> String {
     words.collect::<Vec<_>>().join(" ")
 }
 
+/// Build a single-argument [`Command`] from `arg`, falling back to
+/// `Command::Unknown(input)` if `arg` is empty. Shared by every verb that
+/// requires a non-empty target/text argument, avoiding a repeated
+/// if-empty/else block per verb.
+fn require_arg(arg: String, input: &str, ctor: fn(String) -> Command) -> Command {
+    if arg.is_empty() {
+        Command::Unknown(input.to_string())
+    } else {
+        ctor(arg)
+    }
+}
+
 /// Parse a raw input line into a [`Command`].
 pub fn parse(input: &str) -> Command {
     let lowered = input.to_lowercase();
@@ -147,88 +159,30 @@ pub fn parse(input: &str) -> Command {
 
     match verb {
         "look" | "l" => Command::Look,
-        "examine" | "x" | "inspect" | "show" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Examine(arg)
-            }
-        }
+        "examine" | "x" | "inspect" | "show" => require_arg(arg, input, Command::Examine),
         "go" | "move" | "walk" => match rest.first().and_then(|t| Direction::from_token(t)) {
             Some(dir) => Command::Go(dir),
             None => Command::Unknown(input.to_string()),
         },
-        "take" | "get" | "grab" | "acquire" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Take(arg)
-            }
-        }
-        "drop" | "delete" | "release" | "rm" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Drop(arg)
-            }
-        }
-        "lock" | "secure" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Lock(arg)
-            }
-        }
-        "unlock" | "unward" | "unsecure" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Unlock(arg)
-            }
-        }
+        "take" | "get" | "grab" | "acquire" => require_arg(arg, input, Command::Take),
+        "drop" | "delete" | "release" | "rm" => require_arg(arg, input, Command::Drop),
+        "lock" | "secure" => require_arg(arg, input, Command::Lock),
+        "unlock" | "unward" | "unsecure" => require_arg(arg, input, Command::Unlock),
         "resize" | "rightsize" | "right-size" | "scale" | "downsize" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Resize(arg)
-            }
+            require_arg(arg, input, Command::Resize)
         }
         "monitor" | "light" => Command::Monitor,
         "inventory" | "i" | "inv" => Command::Inventory,
         "score" => Command::Score,
         "achievements" | "badges" => Command::Achievements,
         "quest" | "quests" => Command::Quest,
-        "cast" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Cast(arg)
-            }
-        }
+        "cast" => require_arg(arg, input, Command::Cast),
         // Allow "deploy ..." as a convenience alias for "cast deploy".
         "deploy" => Command::Cast(format!("deploy {}", arg).trim().to_string()),
-        "learn" | "discover" | "study" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Learn(arg)
-            }
-        }
+        "learn" | "discover" | "study" => require_arg(arg, input, Command::Learn),
         "capabilities" | "caps" | "powers" | "spells" => Command::Capabilities,
-        "friction" | "note" | "gripe" => {
-            if verbatim_arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Friction(verbatim_arg)
-            }
-        }
-        "recall" | "remember" => {
-            if verbatim_arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Recall(verbatim_arg)
-            }
-        }
+        "friction" | "note" | "gripe" => require_arg(verbatim_arg, input, Command::Friction),
+        "recall" | "remember" => require_arg(verbatim_arg, input, Command::Recall),
         "memory" | "mem" | "recollect" => Command::Memory,
         "help" | "?" | "h" => Command::Help,
         "version" | "ver" => Command::Version,
