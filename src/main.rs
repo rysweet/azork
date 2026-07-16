@@ -8,7 +8,9 @@ use azork::agent::{truncate_intent, IntentResolver, MockAdapter};
 use azork::az_runner::{AzRunner, FakeAzRunner, ProcessAzRunner};
 use azork::backend;
 use azork::capabilities::{autodiscover, registry::default_cache_path, CapabilityRegistry};
-use azork::dungeon::{cli as dungeon_cli, map as dungeon_map, playwright, render, server};
+use azork::dungeon::{
+    cli as dungeon_cli, diff as dungeon_diff, map as dungeon_map, playwright, render, server,
+};
 use azork::memory::{default_memory_path, GraphMemory, MemoryKind};
 use azork::parser::{self, Command};
 use azork::update;
@@ -659,6 +661,14 @@ fn run_grue_check(world: &mut World) {
 /// subscription via the `AzRunner` seam, assemble a `DungeonMap`, and then
 /// write it to a file, serve it, and/or print a summary, per `args`.
 fn run_crawl(args: dungeon_cli::CrawlArgs) {
+    // `--diff` short-circuits before any backend/runner setup: it never
+    // builds a map, only compares two previously-written `--snapshot`
+    // files, so it takes priority over every other flag.
+    if let Some((old_path, new_path)) = &args.diff {
+        run_crawl_diff(old_path, new_path);
+        return;
+    }
+
     let runner: Box<dyn AzRunner> = match args.backend.to_lowercase().as_str() {
         "az" | "real" | "azure" => Box::new(ProcessAzRunner::new()),
         other => {
@@ -713,6 +723,30 @@ fn run_crawl(args: dungeon_cli::CrawlArgs) {
         }
     );
 
+    if let Some(path) = &args.snapshot {
+        if dmap.partial {
+            eprintln!(
+                "Refusing to write --snapshot '{path}': the assembled map is partial \
+                 (cancelled mid-enumeration). Re-run without cancelling to snapshot a \
+                 complete map."
+            );
+            std::process::exit(1);
+        }
+        match serde_json::to_string_pretty(&dmap) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(path, json) {
+                    eprintln!("Failed to write snapshot to '{path}': {e}");
+                    std::process::exit(1);
+                }
+                println!("Wrote dungeon snapshot to {path}");
+            }
+            Err(e) => {
+                eprintln!("Failed to serialize dungeon snapshot: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     let html = if args.playwright {
         match playwright::try_render(&dmap) {
             Some(rendered) => rendered,
@@ -758,6 +792,28 @@ fn run_crawl(args: dungeon_cli::CrawlArgs) {
             "(Nothing written to disk and no --serve requested; pass --out <path> or --serve to view the map.)"
         );
     }
+}
+
+/// Handle `azork crawl --diff <old> <new>`: read two `--snapshot` JSON
+/// files, diff them, print a themed "Time Rift" report, and exit. Never
+/// touches `AzRunner`/backend selection — a pure read-and-report path.
+fn run_crawl_diff(old_path: &str, new_path: &str) {
+    let read_map = |path: &str| -> dungeon_map::DungeonMap {
+        let raw = std::fs::read_to_string(path).unwrap_or_else(|e| {
+            eprintln!("Failed to read snapshot '{path}': {e}");
+            std::process::exit(1);
+        });
+        serde_json::from_str(&raw).unwrap_or_else(|e| {
+            eprintln!("Failed to parse snapshot '{path}' as a dungeon map: {e}");
+            std::process::exit(1);
+        })
+    };
+
+    let old = read_map(old_path);
+    let new = read_map(new_path);
+
+    let diff = dungeon_diff::diff_maps(&old, &new);
+    print!("{}", dungeon_diff::render_report(&diff));
 }
 
 /// Resolve the mock estate size requested for `azork crawl`: an explicit

@@ -1207,6 +1207,51 @@ fn parse_rejects_unknown_flags() {
     assert!(cli::parse(&args).is_err());
 }
 
+#[test]
+fn parse_reads_snapshot_flag() {
+    let args: Vec<String> = ["--snapshot", "map.json"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let parsed = cli::parse(&args).expect("--snapshot should parse");
+    assert_eq!(parsed.snapshot.as_deref(), Some("map.json"));
+    assert_eq!(parsed.diff, None);
+}
+
+#[test]
+fn parse_rejects_snapshot_missing_value() {
+    let args: Vec<String> = ["--snapshot"].iter().map(|s| s.to_string()).collect();
+    assert!(cli::parse(&args).is_err());
+}
+
+#[test]
+fn parse_reads_diff_flag_with_two_positional_values() {
+    let args: Vec<String> = ["--diff", "old.json", "new.json"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let parsed = cli::parse(&args).expect("--diff should parse");
+    assert_eq!(
+        parsed.diff,
+        Some(("old.json".to_string(), "new.json".to_string()))
+    );
+}
+
+#[test]
+fn parse_rejects_diff_missing_second_value() {
+    let args: Vec<String> = ["--diff", "old.json"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert!(cli::parse(&args).is_err());
+}
+
+#[test]
+fn parse_rejects_diff_missing_both_values() {
+    let args: Vec<String> = ["--diff"].iter().map(|s| s.to_string()).collect();
+    assert!(cli::parse(&args).is_err());
+}
+
 // ---------------------------------------------------------------------------
 // Sanity: the AzRunner seam is genuinely what's driving enumeration.
 // ---------------------------------------------------------------------------

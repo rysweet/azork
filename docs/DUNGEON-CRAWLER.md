@@ -77,6 +77,7 @@ alongside the classic REPL mode — it does not require a separate install:
 ```
 azork crawl [--backend <id>] [--serve] [--port <n>] [--out <path>]
             [--budget <n>] [--playwright] [--mock-size <spec>]
+            [--snapshot <path>] [--diff <old> <new>]
 ```
 
 | Flag | Default | Meaning |
@@ -88,11 +89,29 @@ azork crawl [--backend <id>] [--serve] [--port <n>] [--out <path>]
 | `--budget <n>` | `500` | Soft cap on in-memory resources buffered per enumeration window before flushing to the map graph; tune only if you are constrained on memory. Does **not** limit how much of the subscription is mapped — enumeration always continues to completion or cancellation, just in bounded-size batches. |
 | `--playwright` | off | Best-effort, local-only headless-browser post-processing of the native render (e.g. a rasterized snapshot). Never drives an external website; silently no-ops back to the plain native renderer if browsers aren't installed locally — see [below](#the-optional-playwright-pass). |
 | `--mock-size <spec>` | none (small fixed demo estate) | `mock` backend only: synthesize a larger, deterministic estate instead of the small fixed demo. See [Generating a sized mock tenant](#generating-a-sized-mock-tenant). |
+| `--snapshot <path>` | none | Write the assembled map as JSON to `<path>`, for later `--diff`ing. Composes with `--out`/`--serve`. Refused (no file written, exit 1) if the map is partial (cancelled mid-enumeration). |
+| `--diff <old> <new>` | none | Compare two previously-written `--snapshot` JSON files and print a "Time Rift" report of rooms/resources added, removed, and changed, then exit. Takes priority over every other flag — no map is built and no backend is contacted. |
 
 Press `Ctrl-C` to stop the server; enumeration itself can also be cancelled
 mid-flight (`Ctrl-C` during the "Mapping subscription..." phase) and will still
 serve whatever partial map has been assembled so far, clearly marked as
 partial.
+
+### Comparing snapshots over time ("Time Rift")
+
+Take a snapshot now, make some infrastructure changes, take another snapshot
+later, then diff them:
+
+```
+azork crawl --snapshot before.json
+# ... time passes, infrastructure changes ...
+azork crawl --snapshot after.json
+azork crawl --diff before.json after.json
+```
+
+`--diff` never contacts a backend — it only reads the two JSON files, so it
+works fully offline regardless of which backend produced the snapshots.
+
 
 ## Command reference
 

@@ -27,11 +27,14 @@
 //!   subcommand.
 //! * [`playwright`] — the optional, always-degrading headless-browser
 //!   renderer. Never required for build/tests/CI.
+//! * [`diff`] — pure, IO-free structural diffing between two `DungeonMap`
+//!   snapshots ("Time Rift", `azork crawl --diff <old> <new>`).
 
 pub mod cli;
 pub mod commands;
 pub mod concurrency;
 pub mod decorations;
+pub mod diff;
 pub mod icon_assets;
 pub mod icons;
 pub mod links;
@@ -42,4 +45,5 @@ pub mod server;
 mod type_table;
 mod validate;
 
+pub use diff::{diff_maps, render_report, MapDiff, ResourceChange};
 pub use map::{CancelToken, DungeonMap, Edge, ResourceNode, Room};
