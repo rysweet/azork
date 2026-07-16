@@ -27,6 +27,16 @@ path = "src/main.rs"
 # fresh-clone build for the memory backend. See `memory-store/README.md`.
 default = []
 
+# `test-hooks` gates offline test-injection points (e.g. AZORK_TEST_FAKE_RELEASE_JSON
+# in src/update/network.rs) that must never be reachable from a real, released
+# `azork` binary. It used to be gated on `cfg(debug_assertions)` as a proxy for
+# "not a release build", but that also disabled the hooks for `cargo test
+# --release`/integration tests built in release mode, causing spurious offline
+# test failures against the live GitHub API. Enabling this feature only via the
+# self dev-dependency below means it is active for `cargo test`/`cargo bench`
+# (any profile) but never present in a plain `cargo build --release` binary.
+test-hooks = []
+
 [dependencies]
 semver = "1"
 serde = { version = "1", features = ["derive"] }
@@ -37,3 +47,6 @@ tar = "0.4"
 ureq = "2"
 anyhow = "1"
 recipe-runner-rs = { git = "https://github.com/rysweet/amplihack-recipe-runner", rev = "90b91f941d0b7487c7bb1d92eca0a4140a630706" }
+
+[dev-dependencies]
+azork = { path = ".", features = ["test-hooks"] }

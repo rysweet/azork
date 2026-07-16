@@ -78,6 +78,7 @@ name = "azork"
 version = "0.7.1"
 dependencies = [
  "anyhow",
+ "azork",
  "flate2",
  "recipe-runner-rs",
  "semver",

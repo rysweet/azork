@@ -140,7 +140,11 @@ fn describe_ureq_error(url: &str, err: &ureq::Error) -> String {
 ///
 /// # Test hook
 ///
-/// In **non-release** builds only (`cfg(any(test, debug_assertions))`), the
+/// Only when built with the `test-hooks` cargo feature (`cfg(any(test,
+/// feature = "test-hooks"))`) — which is enabled solely via this crate's own
+/// `[dev-dependencies]` entry on itself, so it is active for `cargo
+/// test`/`cargo bench` in *any* profile (debug or `--release`) but never for a
+/// plain `cargo build`/`cargo build --release` binary — the
 /// `AZORK_TEST_FAKE_RELEASE_JSON` environment variable may inject a release body
 /// so the resolve/update paths can be exercised without a network call. An empty
 /// value falls through to the real path. This hook is **compiled out of release
@@ -148,7 +152,7 @@ fn describe_ureq_error(url: &str, err: &ureq::Error) -> String {
 /// supplied release JSON (which, combined with a matching checksum, would
 /// otherwise let an env var redirect the self-update to arbitrary content).
 pub fn fetch_latest_release() -> Result<GithubRelease> {
-    #[cfg(any(test, debug_assertions))]
+    #[cfg(any(test, feature = "test-hooks"))]
     {
         if let Some(raw) = std::env::var_os("AZORK_TEST_FAKE_RELEASE_JSON") {
             if !raw.is_empty() {
