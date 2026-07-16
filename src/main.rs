@@ -53,6 +53,7 @@ const HELP: &str = r#"Commands (Zork verbs -> Azure operations):
   cast deploy [template]  cast a deployment spell (bicep/ARM, mock)
   inventory / i           list resources you are carrying
   score                   report your governance posture (0-100)
+  achievements / badges   show your governance scorecard (score + badges)
   learn <group>           manually refresh 'az <group> --help' (also auto-learned at startup)
   capabilities / caps     list the az capabilities AzZork has learned
   recall <query>          ranked recall over AzZork's persistent memory
@@ -458,6 +459,7 @@ where
         Command::Monitor => println!("{}", world.monitor()),
         Command::Inventory => println!("{}", world.inventory()),
         Command::Score => println!("{}", world.score()),
+        Command::Achievements => println!("{}", achievements_report(world)),
         Command::Cast(spell) => println!("{}", cast(world, &spell)),
         Command::Learn(group) => {
             println!("{}", learn(registry, memory, runner, cache_path, &group))
@@ -551,6 +553,29 @@ fn capabilities_report(registry: &CapabilityRegistry) -> String {
             registry.help_text()
         )
     }
+}
+
+/// Render the governance scorecard: the score/rank line followed by each
+/// achievement badge, earned or locked (with its specific blocker).
+fn achievements_report(world: &World) -> String {
+    let mut out = world.score();
+    out.push_str("\n\nAchievements:");
+    for badge in world.achievements() {
+        if badge.earned {
+            out.push_str(&format!(
+                "\n  [x] {} {} — {}",
+                badge.emoji, badge.name, badge.description
+            ));
+        } else {
+            out.push_str(&format!(
+                "\n  [ ] {} {} — locked: {}",
+                badge.emoji,
+                badge.name,
+                badge.blocker.unwrap_or_default()
+            ));
+        }
+    }
+    out
 }
 
 /// Introspect `az <group> --help`, fold new capabilities into the registry, and

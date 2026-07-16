@@ -387,6 +387,120 @@ fn returning_to_the_light_resets_the_darkness_streak() {
     assert!(!w.game_over);
 }
 
+// --- achievements -----------------------------------------------------------
+
+/// A single clean, well-governed resource: encrypted, private, locked, free.
+fn clean_resource(name: &str) -> Resource {
+    let mut r = Resource::new(name, "Microsoft.Storage/storageAccounts", "A tidy store.");
+    r.locked = true;
+    r.public = false;
+    r.encrypted = true;
+    r.monthly_cost = 0;
+    r
+}
+
+fn world_with(resource: Resource) -> World {
+    let room = Room::new("rg", "A room.", "eastus", true).with_resource(resource);
+    World::new(vec![room], "rg", "sub").expect("valid test room graph")
+}
+
+#[test]
+fn clean_world_earns_all_four_badges() {
+    let w = world_with(clean_resource("storage"));
+    let badges = w.achievements();
+    assert_eq!(badges.len(), 4);
+    for b in &badges {
+        assert!(b.earned, "{} should be earned on a clean world", b.name);
+        assert!(b.blocker.is_none());
+    }
+    let names: Vec<&str> = badges.iter().map(|b| b.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["Fort Knox", "No Open Doors", "Warded", "Under Budget"]
+    );
+}
+
+#[test]
+fn unencrypted_resource_locks_only_fort_knox() {
+    let mut r = clean_resource("storage");
+    r.encrypted = false;
+    let w = world_with(r);
+    let badges = w.achievements();
+    for b in &badges {
+        if b.name == "Fort Knox" {
+            assert!(!b.earned);
+            assert!(b.blocker.as_deref().unwrap().contains("unencrypted"));
+        } else {
+            assert!(b.earned, "{} must stay earned", b.name);
+        }
+    }
+}
+
+#[test]
+fn public_resource_locks_only_no_open_doors() {
+    let mut r = clean_resource("storage");
+    r.public = true;
+    let w = world_with(r);
+    let badges = w.achievements();
+    for b in &badges {
+        if b.name == "No Open Doors" {
+            assert!(!b.earned);
+            assert!(b.blocker.as_deref().unwrap().contains("public"));
+        } else {
+            assert!(b.earned, "{} must stay earned", b.name);
+        }
+    }
+}
+
+#[test]
+fn unlocked_resource_locks_only_warded() {
+    let mut r = clean_resource("storage");
+    r.locked = false;
+    let w = world_with(r);
+    let badges = w.achievements();
+    for b in &badges {
+        if b.name == "Warded" {
+            assert!(!b.earned);
+            assert!(b.blocker.as_deref().unwrap().contains("unlocked"));
+        } else {
+            assert!(b.earned, "{} must stay earned", b.name);
+        }
+    }
+}
+
+#[test]
+fn cost_overrun_resource_locks_only_under_budget() {
+    let mut r = clean_resource("storage");
+    r.monthly_cost = 800;
+    let w = world_with(r);
+    let badges = w.achievements();
+    for b in &badges {
+        if b.name == "Under Budget" {
+            assert!(!b.earned);
+            assert!(b.blocker.as_deref().unwrap().contains("over budget"));
+        } else {
+            assert!(b.earned, "{} must stay earned", b.name);
+        }
+    }
+}
+
+#[test]
+fn hazardous_world_fails_all_four_badges_with_named_blockers() {
+    let w = two_room_world(); // "storage" resource has all 4 hazards active
+    let badges = w.achievements();
+    assert_eq!(badges.len(), 4);
+    for b in &badges {
+        assert!(!b.earned, "{} should be locked", b.name);
+        assert!(b.blocker.as_deref().unwrap().contains("storage"));
+    }
+}
+
+#[test]
+fn achievements_are_deterministic_across_calls() {
+    let w = two_room_world();
+    assert_eq!(w.achievements(), w.achievements());
+}
+
 #[test]
 fn resource_hazard_helpers_agree_with_flags() {
     let clean = Resource::new("ok", "kind", "desc"); // encrypted, private, free, but unlocked

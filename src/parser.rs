@@ -71,6 +71,8 @@ pub enum Command {
     Inventory,
     /// Report governance-posture score.
     Score,
+    /// Report the governance scorecard: score/rank plus achievement badges.
+    Achievements,
     /// Cast a "spell": currently `deploy` (bicep/ARM deployment).
     Cast(String),
     /// Teach AzZork a new az command group by introspecting `az <group> --help`.
@@ -171,6 +173,7 @@ pub fn parse(input: &str) -> Command {
         "monitor" | "light" => Command::Monitor,
         "inventory" | "i" | "inv" => Command::Inventory,
         "score" => Command::Score,
+        "achievements" | "badges" => Command::Achievements,
         "cast" => {
             if arg.is_empty() {
                 Command::Unknown(input.to_string())
@@ -318,6 +321,8 @@ mod tests {
         assert_eq!(parse("inventory"), Command::Inventory);
         assert_eq!(parse("i"), Command::Inventory);
         assert_eq!(parse("score"), Command::Score);
+        assert_eq!(parse("achievements"), Command::Achievements);
+        assert_eq!(parse("badges"), Command::Achievements);
         assert_eq!(parse("help"), Command::Help);
         assert_eq!(parse("?"), Command::Help);
         assert_eq!(parse("quit"), Command::Quit);
