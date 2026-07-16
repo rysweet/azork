@@ -1,9 +1,16 @@
 //! Command parser for the AzZork text adventure.
 //!
 //! Turns a raw line of player input into a structured [`Command`]. The parser is
-//! deliberately forgiving: it lowercases input, strips filler words ("the", "a",
-//! "an", "at", "to"), and understands common Zork-style aliases (e.g. bare
-//! directions like `north`, or `l` for `look`).
+//! deliberately forgiving: for the purposes of *dispatch* (deciding which verb
+//! was used, and resolving simple single-target arguments like `examine the
+//! webstore` -> `examine webstore`) it lowercases the input and strips filler
+//! words ("the", "a", "an", "at", "to", "into", "on", "my"), and understands
+//! common Zork-style aliases (e.g. bare directions like `north`, or `l` for
+//! `look`). Free-text arguments (currently [`Command::Friction`] and
+//! [`Command::Recall`]) are the exception: their captured text is the
+//! verbatim substring of the player's original input (original case, filler
+//! words intact) with only the leading verb token removed, so notes and
+//! queries are never silently corrupted.
 
 /// A compass / topology direction used to navigate the Azure "dungeon".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -102,21 +109,45 @@ pub enum Command {
 /// Filler words that are stripped before interpreting a command.
 const FILLER: &[&str] = &["the", "a", "an", "at", "to", "into", "on", "my"];
 
+/// Returns the verbatim remainder of `input` after its first whitespace-
+/// separated token (the verb), preserving original case and filler words.
+/// Used for free-text arguments (e.g. [`Command::Friction`],
+/// [`Command::Recall`]) that must not be mangled by dispatch-only
+/// lowercasing/filler-stripping.
+fn verbatim_remainder(input: &str) -> String {
+    let mut words = input.split_whitespace();
+    words.next(); // skip the verb token
+    words.collect::<Vec<_>>().join(" ")
+}
+
+/// Build a single-argument [`Command`] from `arg`, falling back to
+/// `Command::Unknown(input)` if `arg` is empty. Shared by every verb that
+/// requires a non-empty target/text argument, avoiding a repeated
+/// if-empty/else block per verb.
+fn require_arg(arg: String, input: &str, ctor: fn(String) -> Command) -> Command {
+    if arg.is_empty() {
+        Command::Unknown(input.to_string())
+    } else {
+        ctor(arg)
+    }
+}
+
 /// Parse a raw input line into a [`Command`].
 pub fn parse(input: &str) -> Command {
     let lowered = input.to_lowercase();
-    let tokens: Vec<String> = lowered
+    // Borrow tokens from `lowered` instead of allocating a new String per
+    // token; `rest` below is a plain slice, avoiding a second Vec clone.
+    let tokens: Vec<&str> = lowered
         .split_whitespace()
         .filter(|t| !FILLER.contains(t))
-        .map(|t| t.to_string())
         .collect();
 
     if tokens.is_empty() {
         return Command::Empty;
     }
 
-    let verb = tokens[0].as_str();
-    let rest: Vec<String> = tokens[1..].to_vec();
+    let verb = tokens[0];
+    let rest = &tokens[1..];
     let arg = rest.join(" ");
 
     // A bare direction ("north", "n") is shorthand for "go north".
@@ -126,88 +157,34 @@ pub fn parse(input: &str) -> Command {
 
     match verb {
         "look" | "l" => Command::Look,
-        "examine" | "x" | "inspect" | "show" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Examine(arg)
-            }
-        }
-        "go" | "move" | "walk" => match rest.first().and_then(|t| Direction::from_token(t)) {
+        "examine" | "x" | "inspect" | "show" => require_arg(arg, input, Command::Examine),
+        "go" | "move" | "walk" => match rest.first().copied().and_then(Direction::from_token) {
             Some(dir) => Command::Go(dir),
             None => Command::Unknown(input.to_string()),
         },
-        "take" | "get" | "grab" | "acquire" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Take(arg)
-            }
-        }
-        "drop" | "delete" | "release" | "rm" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Drop(arg)
-            }
-        }
-        "lock" | "secure" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Lock(arg)
-            }
-        }
-        "unlock" | "unward" | "unsecure" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Unlock(arg)
-            }
-        }
+        "take" | "get" | "grab" | "acquire" => require_arg(arg, input, Command::Take),
+        "drop" | "delete" | "release" | "rm" => require_arg(arg, input, Command::Drop),
+        "lock" | "secure" => require_arg(arg, input, Command::Lock),
+        "unlock" | "unward" | "unsecure" => require_arg(arg, input, Command::Unlock),
         "resize" | "rightsize" | "right-size" | "scale" | "downsize" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Resize(arg)
-            }
+            require_arg(arg, input, Command::Resize)
         }
         "monitor" | "light" => Command::Monitor,
         "inventory" | "i" | "inv" => Command::Inventory,
         "score" => Command::Score,
         "achievements" | "badges" => Command::Achievements,
         "quest" | "quests" => Command::Quest,
-        "cast" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Cast(arg)
-            }
-        }
+        "cast" => require_arg(arg, input, Command::Cast),
         // Allow "deploy ..." as a convenience alias for "cast deploy".
         "deploy" => Command::Cast(format!("deploy {}", arg).trim().to_string()),
-        "learn" | "discover" | "study" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Learn(arg)
-            }
-        }
+        "learn" | "discover" | "study" => require_arg(arg, input, Command::Learn),
         "capabilities" | "caps" | "powers" | "spells" => Command::Capabilities,
+        // Verbatim (original-case, filler-preserving) text after the verb
+        // token; computed lazily here since only Friction/Recall need it.
         "friction" | "note" | "gripe" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Friction(arg)
-            }
+            require_arg(verbatim_remainder(input), input, Command::Friction)
         }
-        "recall" | "remember" => {
-            if arg.is_empty() {
-                Command::Unknown(input.to_string())
-            } else {
-                Command::Recall(arg)
-            }
-        }
+        "recall" | "remember" => require_arg(verbatim_remainder(input), input, Command::Recall),
         "memory" | "mem" | "recollect" => Command::Memory,
         "help" | "?" | "h" => Command::Help,
         "version" | "ver" => Command::Version,
@@ -376,9 +353,12 @@ mod tests {
             parse("friction help is confusing"),
             Command::Friction("help is confusing".to_string())
         );
+        // The verb ("note") is stripped, but the remaining free text is kept
+        // verbatim -- including filler words like "the" -- since it is not
+        // used for dispatch.
         assert_eq!(
             parse("note the errors are cryptic"),
-            Command::Friction("errors are cryptic".to_string())
+            Command::Friction("the errors are cryptic".to_string())
         );
         assert_eq!(
             parse("recall storage"),
@@ -388,6 +368,43 @@ mod tests {
         assert_eq!(parse("mem"), Command::Memory);
         assert!(matches!(parse("friction"), Command::Unknown(_)));
         assert!(matches!(parse("recall"), Command::Unknown(_)));
+    }
+
+    #[test]
+    fn friction_and_recall_preserve_verbatim_free_text() {
+        // Regression test for #79: filler-word stripping and forced
+        // lowercasing must never corrupt the free-text argument captured by
+        // Friction/Recall -- only the leading verb token is removed.
+        assert_eq!(
+            parse("friction this is a test note"),
+            Command::Friction("this is a test note".to_string())
+        );
+        assert_eq!(
+            parse("friction a cat sat on a mat"),
+            Command::Friction("a cat sat on a mat".to_string())
+        );
+        assert_eq!(
+            parse("friction I am a robot"),
+            Command::Friction("I am a robot".to_string())
+        );
+        assert_eq!(
+            parse("recall Some MixedCase Query"),
+            Command::Recall("Some MixedCase Query".to_string())
+        );
+    }
+
+    #[test]
+    fn friction_and_recall_handle_non_ascii_text() {
+        // Regression test: multi-byte UTF-8 characters must not panic or
+        // corrupt the split when computing the verbatim remainder.
+        assert_eq!(
+            parse("friction café ☕ is confusing"),
+            Command::Friction("café ☕ is confusing".to_string())
+        );
+        assert_eq!(
+            parse("recall naïve résumé 日本語"),
+            Command::Recall("naïve résumé 日本語".to_string())
+        );
     }
 
     #[test]

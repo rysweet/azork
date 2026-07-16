@@ -147,6 +147,9 @@ The full set of parsed commands. Derives `Debug, Clone, PartialEq, Eq`.
 | `Cast(String)` | Cast a spell (currently `deploy [template]`). |
 | `Learn(String)` | Introspect `az <group> --help` and grow the capability registry. |
 | `Capabilities` | List the `az` capabilities learned so far. |
+| `Recall(String)` | Ranked recall over persistent memory for a free-text query (verbatim capture, see below). |
+| `Friction(String)` | Record a friction note into persistent memory (verbatim capture, see below). |
+| `Memory` | Summarise what AzZork remembers (counts by kind + recent notes). |
 | `Help` | Show help (built-in verbs plus learned capabilities). |
 | `Quit` | Leave the game. |
 | `Empty` | Player entered nothing. |
@@ -167,6 +170,13 @@ Parsing rules:
 5. Otherwise match the verb (with aliases) and treat the remaining tokens as the
    target/argument. A verb requiring an argument with none given →
    `Command::Unknown`.
+6. Exception — `Command::Recall` and `Command::Friction` take their argument
+   **verbatim** from the original (non-lowercased) input instead of the
+   filler-stripped, lowercased tokens: only the leading verb token is removed;
+   case and filler words are preserved. Runs of internal whitespace are still
+   collapsed to single spaces (via `split_whitespace().join(" ")`), and
+   leading/trailing whitespace is trimmed, so original spacing is not
+   preserved — only word content, order, and case are.
 
 Recognized verb aliases:
 
@@ -185,6 +195,11 @@ Recognized verb aliases:
 | `Score` | `score` |
 | `Quest` | `quest`, `quests` |
 | `Cast` | `cast <spell>`, or `deploy [template]` as a convenience alias for `cast deploy` |
+| `Learn` | `learn`, `discover`, `study` |
+| `Capabilities` | `capabilities`, `caps`, `powers`, `spells` |
+| `Recall` | `recall`, `remember` (verbatim free-text query) |
+| `Friction` | `friction`, `note`, `gripe` (verbatim free-text note) |
+| `Memory` | `memory`, `mem`, `recollect` |
 | `Help` | `help`, `?`, `h` |
 | `Quit` | `quit`, `q`, `exit` |
 
@@ -583,7 +598,9 @@ Colocated unit tests:
 External test files (in `tests/`, exercising the public contract):
 
 - **`parser_tests.rs`** — every verb + alias, direction round-trips, filler
-  stripping, and the total-function guarantee (no panic on hostile input).
+  stripping, the total-function guarantee (no panic on hostile input), and
+  verbatim-capture regressions for `friction`/`recall` (case, filler words,
+  and word order preserved; internal whitespace still collapsed).
 - **`world_tests.rs`** — prefix matching, inventory-targeted lock/unlock/resize,
   missing-target handling, score-rank boundaries, zero-cost resize, and
   darkness-streak recovery when returning to the light.
