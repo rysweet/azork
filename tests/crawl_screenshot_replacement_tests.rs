@@ -140,21 +140,14 @@ fn readme_no_longer_describes_real_subscription_capture() {
 /// including the exact reproduction command and synthetic tenant size.
 #[test]
 fn readme_describes_deterministic_mock_backend_capture() {
-    let readme = read_readme();
+    // Normalize line-wrapping so substring checks are robust to README reflow.
+    let readme = read_readme().replace('\n', " ");
     assert!(
-        readme.contains("deterministic\noffline mock backend")
-            || readme.contains("deterministic offline mock backend")
-            || readme
-                .to_lowercase()
-                .contains("deterministic\noffline mock backend"),
+        readme.contains("deterministic offline mock backend"),
         "README.md must describe the screenshots as coming from the deterministic offline mock backend"
     );
     assert!(
-        readme.contains("40 resource groups")
-            || readme.contains("40 resource groups and 520\nresources")
-            || readme
-                .replace('\n', " ")
-                .contains("40 resource groups and 520 resources"),
+        readme.contains("40 resource groups and 520 resources"),
         "README.md must mention the synthetic tenant of 40 resource groups and 520 resources"
     );
     assert!(
