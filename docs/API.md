@@ -14,6 +14,7 @@ src/
 ├── main.rs            REPL: banner, input loop, dispatch, y/N confirmation
 ├── parser.rs          Total input parser: text -> Command
 ├── world.rs           World model: rooms, resources, hazards, Grue, scoring
+├── quests.rs          Quest/QuestProgress: read-only governance objectives over World
 ├── az_runner.rs       AzRunner seam: the one place `az` is invoked
 ├── capabilities/      Dynamic capability derivation + persistent registry
 │   ├── mod.rs         Capability type
@@ -142,6 +143,7 @@ The full set of parsed commands. Derives `Debug, Clone, PartialEq, Eq`.
 | `Monitor` | Enable monitoring in the current room. |
 | `Inventory` | List carried resources. |
 | `Score` | Report governance posture. |
+| `Quest` | Show themed quest progress (read-only, derived from `World`). |
 | `Cast(String)` | Cast a spell (currently `deploy [template]`). |
 | `Learn(String)` | Introspect `az <group> --help` and grow the capability registry. |
 | `Capabilities` | List the `az` capabilities learned so far. |
@@ -181,6 +183,7 @@ Recognized verb aliases:
 | `Monitor` | `monitor`, `light` |
 | `Inventory` | `inventory`, `i`, `inv` |
 | `Score` | `score` |
+| `Quest` | `quest`, `quests` |
 | `Cast` | `cast <spell>`, or `deploy [template]` as a convenience alias for `cast deploy` |
 | `Help` | `help`, `?`, `h` |
 | `Quit` | `quit`, `q`, `exit` |
@@ -239,6 +242,7 @@ The top-level game state. Public fields: `subscription: String`,
 | `monitor` | `fn monitor(&mut self) -> String` | Enable monitoring in the current room; resets the darkness streak. |
 | `inventory` | `fn inventory(&self) -> String` | List carried resources. |
 | `total_hazards` | `fn total_hazards(&self) -> u32` | Sum of resource hazards across all rooms and inventory, plus one per dark room. |
+| `all_resources` | `fn all_resources(&self) -> Vec<&Resource>` | Every resource across all rooms plus inventory, aggregated with the same traversal `total_hazards` uses. Read-only; used by the `quests` module. |
 | `score` | `fn score(&self) -> String` | Governance posture string: `100 - hazards*5` (floored at 0), a rank, and move count. |
 | `grue_check` | `fn grue_check(&mut self) -> GrueOutcome` | Run one turn's Grue check; escalates death probability with consecutive dark turns and sets `game_over` on `Devoured`. |
 
@@ -256,6 +260,50 @@ it to 0.
 
 Randomness uses a deterministic xorshift64 generator so tests are reproducible
 via `seed_rng`.
+
+## `quests` module
+
+Read-only governance objectives layered over `World`. No traits, no
+registry/plugin system, no config or save format — a fixed `Vec<Quest>` and
+two small types.
+
+### `struct QuestProgress`
+
+`Copy`-able summary of how a quest is doing: `done: usize`, `total: usize`,
+`complete: bool` (`true` iff `done == total`, including the vacuous case where
+`total == 0`).
+
+### `struct Quest`
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | `&'static str` | Themed quest title, e.g. `"Secure the Realm"`. |
+| `description` | `&'static str` | One-line statement of the goal. |
+| `completion_line` | `&'static str` | Themed flourish printed once `complete`. |
+| `satisfies` | `fn(&Resource) -> bool` (private) | Per-resource predicate defining "done" for this quest. |
+
+| Method | Signature | Description |
+| --- | --- | --- |
+| `evaluate` | `fn evaluate(&self, world: &World) -> QuestProgress` | Runs `satisfies` over `world.all_resources()` and counts matches. Pure; never mutates `world`. |
+
+### `fn builtin_quests`
+
+```rust
+pub fn builtin_quests() -> Vec<Quest>
+```
+
+Returns the three built-in quests, each mapped 1:1 onto an existing `Resource`
+hazard field — no new hazard sources are introduced:
+
+| Quest | `satisfies` |
+| --- | --- |
+| Secure the Realm | `!resource.public` |
+| Seal the Vaults | `resource.encrypted` |
+| Lift the Curse | `resource.locked` |
+
+`main::quests_report(world: &World) -> String` (private to `main.rs`) formats
+these into the REPL's `quest` output, printing `<done>/<total> resources
+secured` per quest plus the `completion_line` when `complete`.
 
 ## `backend` module
 
@@ -518,6 +566,8 @@ Colocated unit tests:
 - **`world.rs`** — `look`, `go`, `take`/`drop`, `lock` hazard reduction,
   `unlock` reversal, `resize` cost reduction, scoring, and the Grue escalation
   model (with a seeded RNG).
+- **`quests.rs`** — partial progress on a hazard-laden world, all-quests-complete
+  on a clean world, and vacuous completion on a world with zero resources.
 - **`backend/mock.rs`** — the world builds, starts lit, exposes a reachable dark
   room, seeds fixable hazards, and is fully winnable to a perfect **100/100**.
 - **`main.rs`** — `cast deploy` is mock-safe, unknown spells are rejected, and

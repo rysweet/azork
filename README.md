@@ -113,6 +113,7 @@ cast deploy [template]  cast a deployment spell (bicep/ARM, mock)
 inventory / i           list resources you are carrying
 score                   report your governance posture (0-100)
 achievements / badges   show your governance scorecard (score + badges)
+quest / quests          view themed governance objectives and their progress
 learn <group>           manually refresh/relearn 'az <group> --help' (auto-discovered at startup too)
 capabilities / caps     list the az capabilities AzZork has learned so far
 recall <query>          ranked recall over AzZork's persistent graph memory
@@ -428,6 +429,34 @@ same `AzRunner` seam as the rest of AzZork, validates resource IDs before
 building deep links or command suggestions, scrubs secret-shaped text from the
 rendered output, and binds its local server to loopback only. Full details:
 [docs/DUNGEON-CRAWLER.md](docs/DUNGEON-CRAWLER.md).
+
+## Quests 📜
+
+`quest` (alias `quests`) reframes your governance posture as three themed,
+read-only objectives, each scored against the same in-memory world state
+`score` already reads — no extra Azure calls, no mutation, no save file:
+
+```
+az> quest
+Quests — governance objectives for this estate:
+
+* Secure the Realm — No resource may face the public internet.
+  4/7 resources secured
+
+* Seal the Vaults — Every resource's data must be encrypted at rest.
+  5/7 resources secured
+
+* Lift the Curse — No resource may be left unlocked and vulnerable.
+  0/7 resources secured
+```
+
+Each quest counts compliant vs. total resources across every room and your
+inventory. When a quest's count reaches its total, it prints `— COMPLETE!`
+followed by a one-line themed flourish (e.g. *"The vaults are sealed. Every
+ledger and hoard lies safe behind unbroken wards."*). Clearing a quest is just
+the flip side of clearing the matching hazard category with `lock` — quests
+add no goals `score` doesn't already track, they just group and narrate them.
+See [docs/USAGE.md](docs/USAGE.md#quests) for the full breakdown.
 
 ## Azure CLI extension (`az azork`) — optional
 
