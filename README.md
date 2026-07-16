@@ -180,8 +180,8 @@ Run it with either `achievements` or `badges`:
 
 ```
 az> achievements
-Governance posture: 75/100  —  rank: Diligent Steward
-Outstanding hazards: 1 (public/unencrypted/unlocked resources, cost overruns, unmonitored rooms)
+Governance posture: 85/100  —  rank: Diligent Steward
+Outstanding hazards: 3 (public/unencrypted/unlocked resources, cost overruns, unmonitored rooms)
 Moves taken: 3
 
 Achievements:
