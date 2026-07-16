@@ -266,6 +266,35 @@ fn build_connects_rooms_sharing_a_region_with_an_edge() {
 }
 
 #[test]
+fn build_places_westerly_region_rooms_west_of_easterly_region_rooms() {
+    // End-to-end through the same `map::build` boundary the CLI/server use:
+    // `iso-rg` is pinned to `westus2`, `web-rg`/`data-rg` to `eastus`. Real
+    // `westus2` lies west of real `eastus`, so the rendered dungeon should
+    // place `iso-rg` west (smaller x) of both eastus rooms — proving the
+    // geography bias is visible to a real consumer of the built map, not
+    // just the internal helper function.
+    let runner = fixture_runner();
+    let dmap = map::build(&runner, map::DEFAULT_BUDGET).expect("build should succeed");
+
+    let iso = dmap.room("iso-rg").expect("iso-rg room");
+    let web = dmap.room("web-rg").expect("web-rg room");
+    let data = dmap.room("data-rg").expect("data-rg room");
+
+    assert!(
+        iso.x < web.x,
+        "westus2 room (iso-rg, x={}) should be west of eastus room (web-rg, x={})",
+        iso.x,
+        web.x
+    );
+    assert!(
+        iso.x < data.x,
+        "westus2 room (iso-rg, x={}) should be west of eastus room (data-rg, x={})",
+        iso.x,
+        data.x
+    );
+}
+
+#[test]
 fn build_has_no_fixed_size_cap_regardless_of_budget() {
     let runner = fixture_runner();
     let tiny_budget = map::build(&runner, 1).expect("build with budget=1 should still succeed");
