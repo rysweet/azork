@@ -586,17 +586,17 @@ impl World {
     pub fn achievements(&self) -> Vec<Achievement> {
         let resources = self.all_resources();
 
-        let first_blocker = |pred: &dyn Fn(&Resource) -> bool, reason: &str| -> Option<String> {
+        let first_blocker = |pred: fn(&Resource) -> bool, reason: &str| -> Option<String> {
             resources
                 .iter()
                 .find(|r| pred(r))
                 .map(|r| format!("{} is {}", r.name, reason))
         };
 
-        let fort_knox_blocker = first_blocker(&|r| !r.encrypted, "unencrypted");
-        let no_open_doors_blocker = first_blocker(&|r| r.public, "public");
-        let warded_blocker = first_blocker(&|r| !r.locked, "unlocked");
-        let under_budget_blocker = first_blocker(&|r| r.monthly_cost >= 500, "over budget");
+        let fort_knox_blocker = first_blocker(|r| !r.encrypted, "unencrypted");
+        let no_open_doors_blocker = first_blocker(|r| r.public, "public");
+        let warded_blocker = first_blocker(|r| !r.locked, "unlocked");
+        let under_budget_blocker = first_blocker(|r| r.monthly_cost >= 500, "over budget");
 
         vec![
             Achievement {
