@@ -108,6 +108,191 @@ Each campaign produces a single consolidated report issue (titled
 run and every fix PR opened in response, plus a final verification note once
 those fixes have been merged and re-tested against `main`.
 
+## Harness scripts
+
+A Carl run is driven by a small set of black-box harness scripts. They are
+**never committed to the repository** — each run materializes them into a
+fresh external scratch directory (`$(mktemp -d /tmp/carl-XXXX)`) so that no
+tooling artifact (logs, captured HTML, expect scripts, node/python cache
+dirs) ever lands inside the git worktree and trips the artifact guard at a
+workflow checkpoint. The four scripts are:
+
+- **`repl_driver.sh`** — a pty/expect-style driver for the interactive game.
+  It spawns `./target/release/azork`, feeds it a scripted sequence of lines
+  (documented verbs, `help`, `capabilities`, `learn <group>`, deliberately
+  garbled verbs to probe intent resolution, empty lines, a multi-kilobyte
+  line to probe input-length handling, and `quit`), and records every byte of
+  stdout/stderr plus the process exit code to a timestamped log file in the
+  scratch directory. It uses idle-detection (no output for N seconds after a
+  prompt) rather than a fixed wall-clock timeout to decide when the product
+  has finished responding to a line, so slow-but-correct responses are never
+  misclassified as hangs.
+- **`crawl_probe.sh`** — launches `azork crawl --serve --port 0` against the
+  offline mock backend (and, when `AZORK_TEST_LIVE_AZURE=1` is set in the
+  environment, additionally against `--backend az`), parses the bound URL
+  from the process's printed startup line, `curl`s the served map and its
+  JSON/HTML room endpoints, and asserts on the adaptive room-sizing
+  invariant (every room's grid allocation is `>= 1 cell per resource it
+  contains`, with no visual overflow) and on the presence of the dungeon
+  decorations (border, torches, treasure chest, dragon marker) in the served
+  markup. It also drives `--mock-size` end to end: it runs the built-in
+  presets (`small`, `medium`, `large`) and at least one explicit
+  `COUNTxPER_GROUP:seed` spec, and separately re-runs the same scenario via
+  the `AZORK_MOCK_SIZE` / `AZORK_MOCK_RGS` / `AZORK_MOCK_RESOURCES_PER_RG` /
+  `AZORK_MOCK_SEED` environment variables to confirm the CLI flag and the
+  env vars agree on the same synthetic tenant shape for a given seed
+  (determinism check).
+- **`readme_verbatim.sh`** — copies every shell command block out of
+  `README.md` (including any install/quick-start steps) into a temp
+  directory, executes each one exactly as printed (no substituted or
+  additional flags), and diffs the observed output/exit code against what
+  the surrounding README prose claims will happen.
+- **`az_backend_min.sh`** — the minimal live-Azure validation path (see
+  "Minimal live-Azure validation" below). Guarded by an explicit opt-in
+  environment variable so it is never run accidentally; it creates exactly
+  one cheap, tagged, azork-owned resource, exercises the relevant `azork
+  crawl --backend az` / `azork-oit` path against it, and tears it down
+  before exiting, even on failure (via a trap).
+
+All four scripts exit non-zero on any captured discrepancy so a campaign run
+can be scripted as `script.sh || record_finding.sh`, and all four write their
+raw captures (logs, HTML, JSON) under the same scratch directory so a finding
+can always cite the exact artifact that demonstrates it.
+
+## Findings ledger
+
+Within a single campaign run, confirmed and candidate findings are tracked in
+a structured ledger (a local table, not committed to the repository) with
+one row per observation:
+
+| column | meaning |
+| --- | --- |
+| `id` | short kebab-case identifier for the finding |
+| `surface` | which product surface it was found on (`repl`, `crawl`, `cli`, `readme`, `az-backend`) |
+| `repro` | exact command(s)/input(s) that trigger it |
+| `observed` | captured stdout/stderr/exit code (or a pointer to the harness log) |
+| `expected` | what the README/docs/help text promises instead |
+| `severity` | `critical` / `high` / `medium` / `low` |
+| `occurrences` | how many times it has been reproduced |
+| `dup_of` | an existing `carl-oit` issue number, if this duplicates one, else empty |
+| `status` | `candidate`, `confirmed`, `filed`, `fix-in-progress`, `fixed`, `wont-fix` |
+| `issue_number` / `pr_number` | links once filed/fixed |
+
+A finding is only promoted from `candidate` to `confirmed` — and therefore
+eligible to become a GitHub issue — once it has been reproduced **at least
+twice** with a captured stdout/stderr/exit code each time, and only if
+`dup_of` is empty after checking it against the known-issue list below.
+Single-occurrence anomalies stay `candidate` and are noted in the campaign
+report's "not yet confirmed" section rather than filed.
+
+## Duplicate-check policy
+
+Before filing any new issue, a campaign run checks the finding against
+**all** existing issues in the project repository — regardless of label or
+open/closed state — not merely those already carrying the `carl-oit` label.
+Many previously-triaged issues predate the `carl-oit` label and instead
+carry unrelated labels (`bug`, `enhancement`) or no label at all, so a
+label-scoped search alone would miss them. In addition to this general
+all-issue search, this fixed set of previously-triaged issues is always
+checked explicitly so the campaign never re-files a known problem under a
+new number:
+
+- **#8** (`az` enumeration is slow / N+1) — labeled `bug`, **already closed**
+  as fixed. A campaign run does not reopen or re-file it; it re-verifies the
+  fix still holds against current `main` (see "Live-Azure validation"
+  below) and adds a fresh timing comment. It is only reopened if a
+  regression is observed with new evidence.
+- **#9** (tenant-policy storage create) — open; referenced, not re-filed.
+- **#10** / **#11** (creation-intent disambiguation) — open; referenced, not
+  re-filed.
+- **#16** (update TOCTOU) — open; referenced, not re-filed.
+- **#45** (sibling secret-detector audit) — open; referenced, not re-filed.
+
+This campaign's own tracking work is filed under **#66** (the umbrella
+issue for the OIT harness/tooling build), which the campaign report should
+cross-reference as its parent issue rather than treat as a `carl-oit`
+finding.
+
+## Severity taxonomy (applied consistently)
+
+- **Critical** — crash, panic, or data loss.
+- **High** — a documented feature is broken, or output is simply wrong.
+- **Medium** — confusing UX or a misleading error message; the feature
+  technically works.
+- **Low** — cosmetic issue or a documentation nit (typo, stale screenshot,
+  broken link).
+
+## Minimal live-Azure validation
+
+When a finding can only be confirmed against a real subscription (rather
+than the mock backend), a campaign performs the smallest possible live check
+rather than skipping the surface entirely:
+
+1. Create exactly one cheap resource group + `Standard_LRS` storage account,
+   named with the `azork-oit-` prefix and tagged `owner=azork-oit`,
+   `azork-oit=1`, and a `ttl`, so ownership is unambiguous before any
+   mutation is attempted — consistent with the ownership-gated mutation
+   rules in `src/oit/guardrails.rs`.
+2. Exercise the target code path (`azork crawl --backend az` and/or the
+   relevant `azork-oit` use case) against that one resource.
+3. Tear the resource down via azork's own OIT teardown path before the
+   campaign continues, regardless of whether the check passed or failed.
+4. Never mutate or delete any resource azork did not create itself, and stay
+   under azork's `COST_CAP_USD` guardrail at all times — no bypassing or
+   weakening of `src/oit/guardrails.rs` or `src/bin/azork-oit.rs`.
+
+Large-tenant enumeration-performance checks (e.g. confirming a fix for
+"#8-style" N+1 slowness) are instead validated against a `--mock-size
+large`/`huge` synthetic tenant, which reproduces the same fan-out shape
+without any live-Azure cost or risk.
+
+## Fix-workstream dispatch
+
+Each confirmed, filed finding is fixed by launching an independent
+dev-orchestrator workstream as its own subprocess, in its own fresh clone
+under `/home/azureuser/src/<bugname>-fix` (never under any other user's home
+directory), so parallel fixes for unrelated findings can never collide on
+files, branch state, or build artifacts:
+
+```
+cd /home/azureuser/src/<bugname>-fix && \
+  env -u CLAUDECODE AMPLIHACK_HOME=/home/azureuser/.amplihack \
+  amplihack recipe run \
+  /home/azureuser/.amplihack/amplifier-bundle/recipes/smart-orchestrator.yaml \
+  -c task_description="Fix <issue-number>: <repro + observed/expected + artifact-hygiene rules>" \
+  -c repo_path="." \
+  -c force_single_workstream="true" \
+  --verbose
+```
+
+Workstreams are launched detached (`nohup ... &`) so Carl's own test → file →
+fix → re-test loop is never blocked waiting on a fix to land; their state is
+polled by checking PR/branch status, never by sleeping on a fixed timeout.
+Each workstream's own task description carries forward the same artifact
+hygiene constraints (no `node_modules/`/`.pytest_cache` left in its worktree)
+so a fix workstream cannot itself trip the artifact guard at its own
+checkpoint. Once a fix workstream's PR is open, its `target/` build directory
+is removed to reclaim disk (never its source), and the campaign re-tests the
+affected surface from a fresh clone once the fix lands or the PR is green.
+
+## Campaign report format
+
+The consolidated report issue's body is a markdown checklist, one line per
+finding, so campaign status is readable at a glance:
+
+```
+- [ ] #71 REPL: empty-line input after `learn` panics — fix: #72 (open)
+- [x] #68 crawl --serve: adaptive room sizing overflows at >40 resources/RG — fix: #70 (merged)
+- [ ] #8 (verified fixed, not reopened): #61 parallel enumeration confirmed via --mock-size large timing
+```
+
+Each line links the finding issue and, once one exists, its fix PR, plus a
+short status word (`open`, `merged-pending-review`, `merged`, `wont-fix`). No
+additional labels beyond `carl-oit` are introduced for report bookkeeping.
+The report issue itself references **#66** as its parent/umbrella issue
+(the harness-build task that produced this campaign tooling), not as a
+`carl-oit` finding.
+
 ## Relationship to `azork-oit`
 
 | | Carl campaign | `azork-oit` |
