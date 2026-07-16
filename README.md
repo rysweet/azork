@@ -186,10 +186,18 @@ to check out side-by-side.
 
 ## Install
 
-The fastest way to get `azork` is the one-line installer, which downloads a
-prebuilt binary from the latest [GitHub Release](https://github.com/rysweet/azork/releases),
-verifies its SHA-256 checksum, and installs it to your `PATH` — no Rust
-toolchain required:
+> **⚠️ No GitHub Release has been published yet.** The one-line installer and
+> `cargo install --git` below are the long-term intended primary way to get
+> `azork`, but until a [Release](https://github.com/rysweet/azork/releases) is
+> cut, the commands in this section will fail with a 404 (and `azork update`
+> will fail the same way, with "no published release found"). **Until then,
+> use [Build from source](#build-from-source-works-today) below** — it works
+> right now.
+
+Once releases exist, the fastest way to get `azork` will be the one-line
+installer, which downloads a prebuilt binary from the latest
+[GitHub Release](https://github.com/rysweet/azork/releases), verifies its
+SHA-256 checksum, and installs it to your `PATH` — no Rust toolchain required:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rysweet/azork/main/install.sh | sh
@@ -220,10 +228,11 @@ See the [full Install guide](docs/INSTALL.md) for the checksum verification
 model, `AZORK_INSTALL_DIR`/`AZORK_VERSION` details, `--help`/`--print-url`
 flags, and a troubleshooting table.
 
-### Alternative: build from source
+### Build from source (works today)
 
-Requires a Rust toolchain (`cargo`). Install directly from GitHub without
-cloning (the crate is not published to crates.io):
+Requires a Rust toolchain (`cargo`). This is the currently-working install
+path since no GitHub Release has been published yet. Install directly from
+GitHub without cloning (the crate is not published to crates.io):
 
 ```bash
 cargo install --git https://github.com/rysweet/azork

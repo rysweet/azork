@@ -7,7 +7,13 @@ the [README → Install](../README.md#install) section.
 - Already installed and want to stay current? See the [Self-Update guide](UPDATING.md).
 - Building or cutting releases yourself? See the [Development guide](DEVELOPMENT.md).
 
-## Quick install (recommended)
+## Quick install (recommended once releases exist)
+
+> **⚠️ No GitHub Release has been published yet.** Until one is cut, the
+> command below (and `azork update`) will fail with a 404 / "no published
+> release found for rysweet/azork yet". Use
+> [Build from source](#build-from-source-with-cargo-no-cratesio-publish-required)
+> instead until a release is available.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rysweet/azork/main/install.sh | sh

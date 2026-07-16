@@ -228,6 +228,43 @@ fn crawl_screenshots_exist_on_disk() {
     }
 }
 
+/// Regression test for issue #80: as long as the repo has zero published
+/// GitHub Releases, the README's Install section must not present the
+/// curl-based one-liner as unconditionally working — it must carry a clear
+/// warning above the one-liner, and "Build from source" must be reachable
+/// as the currently-working alternative. This is a best-effort content
+/// check (not a live check against the GitHub Releases API); if a release
+/// is eventually published, this note should be revisited/removed.
+#[test]
+fn readme_install_section_warns_about_missing_release() {
+    let readme = read_readme();
+    let lower = readme.to_lowercase();
+
+    let install_idx = readme
+        .find("## Install")
+        .expect("README.md must contain an '## Install' section");
+    let curl_idx = readme[install_idx..]
+        .find("curl -fsSL https://raw.githubusercontent.com/rysweet/azork/main/install.sh")
+        .map(|i| i + install_idx)
+        .expect("Install section must contain the curl one-liner");
+
+    let warning_snippet = "no github release has been published yet";
+    let warning_idx = lower
+        .find(warning_snippet)
+        .expect("README.md must warn that no GitHub Release has been published yet");
+
+    assert!(
+        warning_idx < curl_idx,
+        "the 'no GitHub Release published yet' warning must appear before the curl one-liner \
+         in the Install section, not after it"
+    );
+
+    assert!(
+        lower.contains("build from source"),
+        "README.md Install section must reference 'build from source' as the working alternative"
+    );
+}
+
 /// Requirement 4 (continued): ... and are actually embedded, in order, in
 /// the README's Dungeon Crawler Mode section.
 #[test]
