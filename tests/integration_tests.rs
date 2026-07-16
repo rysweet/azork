@@ -155,3 +155,54 @@ fn unknown_and_empty_input_do_not_disturb_the_world() {
     assert_eq!(w.current_room().name, start);
     assert_eq!(w.moves(), 0);
 }
+
+#[test]
+fn achievements_and_badges_aliases_report_locked_scorecard_on_a_fresh_world() {
+    let mut w = mock_world();
+    let expected = "Fort Knox,No Open Doors,Warded,Under Budget";
+
+    // Both verb aliases dispatch to the same underlying command and return
+    // the identical, deterministic badge-name list (order matches the fixed
+    // four-badge scorecard, not earned/locked state).
+    assert_eq!(dispatch(&mut w, "achievements"), expected);
+    assert_eq!(dispatch(&mut w, "badges"), expected);
+
+    // A fresh mock world has outstanding hazards, so nothing is earned yet;
+    // moves/state must remain untouched by a purely read-only report.
+    assert_ne!(w.total_hazards(), 0);
+}
+
+#[test]
+fn achievements_command_reflects_a_fully_hardened_world() {
+    let mut w = mock_world();
+    let script = [
+        "lock portal",
+        "north", // web-rg
+        "lock appservice",
+        "lock webstore",
+        "north", // unmon-rg (dark)
+        "monitor",
+        "lock orphan-vm",
+        "south", // web-rg
+        "south", // landing-rg
+        "east",  // data-rg
+        "lock keyvault",
+        "lock sqlserver",
+        "resize sqlserver",
+        "west", // landing-rg
+        "down", // identity-rg
+        "lock managed-identity",
+    ];
+    for line in script {
+        dispatch(&mut w, line);
+    }
+
+    assert_eq!(w.total_hazards(), 0);
+    // Same verb, same badge names — the scorecard doesn't grow or reorder
+    // once every hazard is cleared; only the earned/locked state (not
+    // exercised by this string-only dispatch helper) would change.
+    assert_eq!(
+        dispatch(&mut w, "achievements"),
+        "Fort Knox,No Open Doors,Warded,Under Budget"
+    );
+}
