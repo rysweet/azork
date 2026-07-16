@@ -211,6 +211,13 @@ no persistence beyond the in-memory `World`: badges reset with a new session
 just like the rest of your dungeon state, and offline/mock backends behave
 identically to any other run since achievements never touch the network.
 
+Coverage: unit tests in `tests/world_tests.rs` assert a clean `World` earns
+every badge and that each hazard type (public, unencrypted, unlocked, over
+budget) fails exactly its corresponding badge; end-to-end tests in
+`tests/integration_tests.rs` dispatch the `achievements`/`badges` verbs
+through the same parser/REPL path a player types, on both a fresh (locked)
+world and a fully hardened one.
+
 ## Agentic intent resolution
 
 The [`src/agent_engine/`](src/agent_engine/) module depends on and drives the
