@@ -292,7 +292,10 @@ same one the REPL's `az` backend uses — see
   bias, falling back to the prior hash-only placement. (Implementation
   detail: longitude/latitude are bucketed into coarse 20°-by-20° cells
   before being applied as bias, so the effect is a rough geographic
-  grouping rather than precise placement.)
+  grouping rather than precise placement. It is a directional *hint*: two
+  regions in different buckets keep their west/east, north/south order, but
+  geographically close regions may share a cell, and on a dense map the
+  collision resolver may nudge a room into a neighbouring band.)
 
 The graph is the single source of truth handed to both the native renderer and
 the HTTP server's JSON API — the picture and the API are two views onto the

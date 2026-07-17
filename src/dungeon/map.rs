@@ -465,16 +465,25 @@ fn region_bias(region: &str) -> (i32, i32) {
 }
 
 /// A stable, non-random grid position derived purely from `(name, region)`,
-/// biased by [`region_bias`] so the overall dungeon layout mirrors real
+/// biased by [`region_bias`] so the overall dungeon layout *leans* toward real
 /// Azure region geography (west/east, north/south) while resources within a
 /// region keep their existing hash-based scatter. Never influenced by
 /// enumeration order or process/run state, so the same subscription always
-/// lays out identically. Each region gets its own 6x6 grid "wing"; wings are
-/// ordered west->east, north->south by the bias so a handful of resource
-/// groups still draw as a tight, walkable dungeon rather than a few rooms
-/// scattered across a mostly-empty parchment; any collisions this creates
-/// between unrelated rooms are resolved afterwards by
-/// [`resolve_room_collisions`].
+/// lays out identically.
+///
+/// Each region is offset into a [`WING_SIZE`]x[`WING_SIZE`] band chosen by its
+/// coarse geographic bucket. Distinct buckets tile without gaps or overlap, so
+/// the west->east / north->south lean holds between any two regions that fall
+/// in different buckets. It stays a directional *hint* rather than a hard
+/// ordering guarantee for two reasons. First, the bucket is coarse (20-degree
+/// cells), so geographically close regions (e.g. `eastus` / `eastus2` /
+/// `canadacentral` / `canadaeast`) can share a band and cluster together
+/// instead of each getting a private wing — which is intended, since they *are*
+/// close. Second, for a dense subscription, [`resolve_room_collisions`] may
+/// walk a colliding room out of its band into a neighbouring one. So a handful
+/// of resource groups still draw as a tight, walkable dungeon that roughly
+/// mirrors real geography, rather than a few rooms scattered across a
+/// mostly-empty parchment.
 const WING_SIZE: i32 = 6;
 
 fn deterministic_position(name: &str, region: &str) -> (i32, i32) {
@@ -612,6 +621,32 @@ mod region_geography_tests {
             north.1,
             south.1
         );
+    }
+
+    #[test]
+    fn european_region_is_east_of_us_region() {
+        // Cross-continent sanity: real westeurope (Amsterdam) lies east of real
+        // eastus (Virginia). Naming ("west"europe) is intentionally misleading
+        // here — the bias follows real longitude, not the region name — so this
+        // guards against anyone "fixing" the table by name instead of geography.
+        let eu = region_bias("westeurope");
+        let us = region_bias("eastus");
+        assert!(
+            eu.0 > us.0,
+            "westeurope.bias_x={} should be east of eastus.bias_x={}",
+            eu.0,
+            us.0
+        );
+    }
+
+    #[test]
+    fn geographically_close_regions_share_a_coarse_bucket() {
+        // Documents (and locks in) the intended coarse-bucketing behavior: the
+        // 20-degree cells are deliberately coarse, so nearby regions cluster
+        // into the same band rather than each getting a private wing. This is a
+        // directional hint, not per-region isolation.
+        assert_eq!(region_bias("eastus"), region_bias("eastus2"));
+        assert_eq!(region_bias("eastus"), region_bias("canadacentral"));
     }
 
     #[test]
