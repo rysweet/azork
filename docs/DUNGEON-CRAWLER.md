@@ -283,7 +283,19 @@ same one the REPL's `az` backend uses — see
 - **Positions** — each room is assigned a deterministic (x, y) grid position
   computed from a stable hash of its name and region, so the same subscription
   always lays out the same way between runs (no random jitter, no external
-  layout engine required for the default render).
+  layout engine required for the default render). Positions are also biased
+  by a coarse, built-in table of common Azure regions' real-world
+  longitude/latitude, so the overall dungeon roughly mirrors real geography
+  — westerly regions draw west of easterly ones, northerly regions draw
+  north of southerly ones — while resources within a single region keep
+  their existing hash-based scatter. Regions not in the table simply get no
+  bias, falling back to the prior hash-only placement. (Implementation
+  detail: longitude/latitude are bucketed into coarse 20°-by-20° cells
+  before being applied as bias, so the effect is a rough geographic
+  grouping rather than precise placement. It is a directional *hint*: two
+  regions in different buckets keep their west/east, north/south order, but
+  geographically close regions may share a cell, and on a dense map the
+  collision resolver may nudge a room into a neighbouring band.)
 
 The graph is the single source of truth handed to both the native renderer and
 the HTTP server's JSON API — the picture and the API are two views onto the

@@ -412,21 +412,89 @@ fn subscription_from_id(resource_id: &str) -> Option<String> {
     parts.next().map(|s| s.to_string())
 }
 
-/// A stable, non-random grid position derived purely from `(name, region)`.
-/// Never influenced by enumeration order or process/run state, so the same
-/// subscription always lays out identically. The grid is deliberately small
-/// (a compact dungeon "wing" per hash bucket, not a sprawling estate) so a
-/// handful of resource groups draw as a tight, walkable dungeon rather than
-/// a few rooms scattered across a mostly-empty parchment; any collisions
-/// this creates between unrelated rooms are resolved afterwards by
-/// [`resolve_room_collisions`].
+/// Approximate real-world (longitude, latitude) for common Azure regions.
+/// Used only to bias dungeon layout so regions cluster in roughly the
+/// correct compass direction relative to one another — never for any
+/// live/geo lookup, and never touching the network.
+const REGION_COORDS: &[(&str, f64, f64)] = &[
+    ("eastus", -79.0, 37.5),
+    ("eastus2", -78.0, 36.6),
+    ("westus", -122.4, 47.2),
+    ("westus2", -119.7, 45.8),
+    ("westus3", -112.0, 33.4),
+    ("centralus", -93.6, 41.6),
+    ("northcentralus", -87.6, 41.9),
+    ("southcentralus", -97.6, 29.4),
+    ("westeurope", 4.9, 52.4),
+    ("northeurope", -6.2, 53.3),
+    ("uksouth", -0.8, 51.5),
+    ("ukwest", -3.2, 53.4),
+    ("southeastasia", 103.8, 1.3),
+    ("eastasia", 114.2, 22.3),
+    ("japaneast", 139.8, 35.7),
+    ("japanwest", 135.5, 34.7),
+    ("australiaeast", 151.2, -33.9),
+    ("australiasoutheast", 145.0, -37.8),
+    ("brazilsouth", -46.6, -23.5),
+    ("canadacentral", -79.4, 43.7),
+    ("canadaeast", -71.2, 46.8),
+    ("southafricanorth", 28.2, -25.7),
+    ("centralindia", 73.9, 18.5),
+    ("koreacentral", 127.0, 37.5),
+];
+
+/// Bucket `region`'s real-world (lon, lat) into a coarse grid offset used to
+/// bias dungeon layout, so westerly regions draw west (smaller x) of
+/// easterly regions, and northerly regions draw north (smaller y) of
+/// southerly ones. Unknown regions return `(0, 0)` (no bias — falls back
+/// fully to hash-only [`deterministic_position`] behavior). Never panics,
+/// never touches the network; a pure lookup + arithmetic function.
+///
+/// Coordinates are normalized (`lon + 180`, `90 - lat`, both always >= 0)
+/// then bucketed in 20-degree cells so the bias stays compact and doesn't
+/// dominate/sprawl the existing tight hash-grid.
+fn region_bias(region: &str) -> (i32, i32) {
+    match REGION_COORDS.iter().find(|(name, _, _)| *name == region) {
+        Some(&(_, lon, lat)) => {
+            let bx = ((lon + 180.0) / 20.0).floor() as i32;
+            let by = ((90.0 - lat) / 20.0).floor() as i32;
+            (bx, by)
+        }
+        None => (0, 0),
+    }
+}
+
+/// A stable, non-random grid position derived purely from `(name, region)`,
+/// biased by [`region_bias`] so the overall dungeon layout *leans* toward real
+/// Azure region geography (west/east, north/south) while resources within a
+/// region keep their existing hash-based scatter. Never influenced by
+/// enumeration order or process/run state, so the same subscription always
+/// lays out identically.
+///
+/// Each region is offset into a [`WING_SIZE`]x[`WING_SIZE`] band chosen by its
+/// coarse geographic bucket. Distinct buckets tile without gaps or overlap, so
+/// the west->east / north->south lean holds between any two regions that fall
+/// in different buckets. It stays a directional *hint* rather than a hard
+/// ordering guarantee for two reasons. First, the bucket is coarse (20-degree
+/// cells), so geographically close regions (e.g. `eastus` / `eastus2` /
+/// `canadacentral` / `canadaeast`) can share a band and cluster together
+/// instead of each getting a private wing — which is intended, since they *are*
+/// close. Second, for a dense subscription, [`resolve_room_collisions`] may
+/// walk a colliding room out of its band into a neighbouring one. So a handful
+/// of resource groups still draw as a tight, walkable dungeon that roughly
+/// mirrors real geography, rather than a few rooms scattered across a
+/// mostly-empty parchment.
+const WING_SIZE: i32 = 6;
+
 fn deterministic_position(name: &str, region: &str) -> (i32, i32) {
     let mut hasher = DefaultHasher::new();
     (name, region).hash(&mut hasher);
     let h = hasher.finish();
-    let x = ((h & 0xFFFF) % 6) as i32;
-    let y = (((h >> 16) & 0xFFFF) % 6) as i32;
-    (x, y)
+    let fine_x = ((h & 0xFFFF) % WING_SIZE as u64) as i32;
+    let fine_y = (((h >> 16) & 0xFFFF) % WING_SIZE as u64) as i32;
+
+    let (bias_x, bias_y) = region_bias(region);
+    (bias_x * WING_SIZE + fine_x, bias_y * WING_SIZE + fine_y)
 }
 
 /// Resolve any rooms whose hash-derived [`deterministic_position`] collided
@@ -523,4 +591,108 @@ fn same_region_edges(rooms: &[Room]) -> Vec<Edge> {
         }
     }
     edges
+}
+
+#[cfg(test)]
+mod region_geography_tests {
+    use super::*;
+
+    #[test]
+    fn west_region_is_west_of_east_region() {
+        // Same continent (US), so naming and real-world geography agree.
+        let west = deterministic_position("r", "westus");
+        let east = deterministic_position("r", "eastus");
+        assert!(
+            west.0 < east.0,
+            "westus.x={} should be < eastus.x={}",
+            west.0,
+            east.0
+        );
+    }
+
+    #[test]
+    fn north_region_is_north_of_south_region() {
+        // Same continent (US), so naming and real-world geography agree.
+        let north = region_bias("northcentralus");
+        let south = region_bias("southcentralus");
+        assert!(
+            north.1 < south.1,
+            "northcentralus.y={} should be < southcentralus.y={}",
+            north.1,
+            south.1
+        );
+    }
+
+    #[test]
+    fn european_region_is_east_of_us_region() {
+        // Cross-continent sanity: real westeurope (Amsterdam) lies east of real
+        // eastus (Virginia). Naming ("west"europe) is intentionally misleading
+        // here — the bias follows real longitude, not the region name — so this
+        // guards against anyone "fixing" the table by name instead of geography.
+        let eu = region_bias("westeurope");
+        let us = region_bias("eastus");
+        assert!(
+            eu.0 > us.0,
+            "westeurope.bias_x={} should be east of eastus.bias_x={}",
+            eu.0,
+            us.0
+        );
+    }
+
+    #[test]
+    fn geographically_close_regions_share_a_coarse_bucket() {
+        // Documents (and locks in) the intended coarse-bucketing behavior: the
+        // 20-degree cells are deliberately coarse, so nearby regions cluster
+        // into the same band rather than each getting a private wing. This is a
+        // directional hint, not per-region isolation.
+        assert_eq!(region_bias("eastus"), region_bias("eastus2"));
+        assert_eq!(region_bias("eastus"), region_bias("canadacentral"));
+    }
+
+    #[test]
+    fn determinism_across_calls() {
+        let a = deterministic_position("myapp-rg", "westeurope");
+        let b = deterministic_position("myapp-rg", "westeurope");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn unknown_region_falls_back_to_hash_only() {
+        assert_eq!(region_bias("mars-central"), (0, 0));
+
+        // With a (0,0) bias, deterministic_position must equal the raw hash
+        // fine offset (pre-bias behavior) exactly.
+        let name = "some-rg";
+        let region = "mars-central";
+        let mut hasher = DefaultHasher::new();
+        (name, region).hash(&mut hasher);
+        let h = hasher.finish();
+        let expected = (
+            ((h & 0xFFFF) % WING_SIZE as u64) as i32,
+            (((h >> 16) & 0xFFFF) % WING_SIZE as u64) as i32,
+        );
+        assert_eq!(deterministic_position(name, region), expected);
+    }
+
+    #[test]
+    fn region_coords_table_has_no_duplicate_keys() {
+        let mut names: Vec<&str> = REGION_COORDS.iter().map(|(n, _, _)| *n).collect();
+        let original_len = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(
+            names.len(),
+            original_len,
+            "REGION_COORDS has duplicate region keys"
+        );
+    }
+
+    #[test]
+    fn bias_is_never_negative_given_valid_lon_lat() {
+        for &(name, _, _) in REGION_COORDS {
+            let (bx, by) = region_bias(name);
+            assert!(bx >= 0, "{name} produced negative bias_x={bx}");
+            assert!(by >= 0, "{name} produced negative bias_y={by}");
+        }
+    }
 }
