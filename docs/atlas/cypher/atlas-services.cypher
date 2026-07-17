@@ -1,0 +1,10 @@
+CREATE (:Service {name: 'dungeon', kind: 'module', path: 'src/dungeon'});
+CREATE (:Service {name: 'backend', kind: 'module', path: 'src/backend'});
+CREATE (:Service {name: 'capabilities', kind: 'module', path: 'src/capabilities'});
+CREATE (:Service {name: 'memory', kind: 'module', path: 'src/memory'});
+CREATE (:Service {name: 'update', kind: 'module', path: 'src/update'});
+CREATE (:Service {name: 'oit', kind: 'module', path: 'src/oit'});
+CREATE (:Service {name: 'agent-agent_engine', kind: 'module', path: 'src/agent_engine'});
+CREATE (:Service {name: 'azork', kind: 'binary', path: 'src/main.rs'});
+CREATE (:Service {name: 'azork-oit', kind: 'binary', path: 'src/bin/azork-oit.rs'});
+CREATE (:Service {name: 'http-server', kind: 'service', path: 'src/dungeon/server.rs'});

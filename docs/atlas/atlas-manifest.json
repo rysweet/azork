@@ -1,0 +1,79 @@
+{
+  "repo": "rysweet/azork",
+  "generated_by": "code-atlas skill",
+  "layers": [
+    {"slug": "repo-surface", "name": "Repository Surface", "diagram_type": "flowchart TD"},
+    {"slug": "ast-lsp-bindings", "name": "AST+LSP Symbol Bindings", "diagram_type": "flowchart LR"},
+    {"slug": "compile-deps", "name": "Compile-time Dependencies", "diagram_type": "DOT digraph"},
+    {"slug": "runtime-topology", "name": "Runtime Topology", "diagram_type": "DOT digraph"},
+    {"slug": "api-contracts", "name": "API Contracts", "diagram_type": "flowchart TD"},
+    {"slug": "data-flow", "name": "Data Flow", "diagram_type": "flowchart LR"},
+    {"slug": "service-components", "name": "Service Component Architecture", "diagram_type": "graph TD"},
+    {"slug": "user-journeys", "name": "User Journey Scenarios", "diagram_type": "sequenceDiagram"}
+  ],
+  "services": [
+    {"name": "dungeon", "kind": "module", "path": "src/dungeon"},
+    {"name": "backend", "kind": "module", "path": "src/backend"},
+    {"name": "capabilities", "kind": "module", "path": "src/capabilities"},
+    {"name": "memory", "kind": "module", "path": "src/memory"},
+    {"name": "update", "kind": "module", "path": "src/update"},
+    {"name": "oit", "kind": "module", "path": "src/oit"},
+    {"name": "agent-agent_engine", "kind": "module", "path": "src/agent_engine"},
+    {"name": "azork", "kind": "binary", "path": "src/main.rs"},
+    {"name": "azork-oit", "kind": "binary", "path": "src/bin/azork-oit.rs"},
+    {"name": "http-server", "kind": "service", "path": "src/dungeon/server.rs"}
+  ],
+  "endpoints": [
+    {"id": "GET /", "kind": "http", "path": "/", "handler": "server::route (HTML map)"},
+    {"id": "GET /api/v1/rooms", "kind": "http", "path": "/api/v1/rooms", "handler": "server::route (rooms JSON)"},
+    {"id": "GET /api/v1/rooms/<id>", "kind": "http", "path": "/api/v1/rooms/", "handler": "server::route (room prefix)"},
+    {"id": "GET /api/v1/resources/<id>", "kind": "http", "path": "/api/v1/resources/", "handler": "server::route (resource prefix)"}
+  ],
+  "journeys": [
+    {"id": "1-crawl-mock-large", "name": "Crawl a mock estate and render the map"},
+    {"id": "2-repl-look-move-quests-score", "name": "REPL: look / move / quests / score"},
+    {"id": "3-oit-dry-run-report", "name": "OIT dry-run campaign to friction report"},
+    {"id": "4-self-update-check", "name": "Self-update check"},
+    {"id": "5-capabilities-autodiscover-registry", "name": "Capabilities autodiscover into registry"},
+    {"id": "6-dungeon-snapshot-diff-time-rift", "name": "Dungeon snapshot/diff (Time Rift)"}
+  ],
+  "bugs": [
+    {"id": "91", "title": "OIT --dry-run is not offline: it can invoke the real az binary", "layer": "user-journeys", "file": "src/bin/azork-oit.rs", "line": 433, "severity": "medium"},
+    {"id": "92", "title": "server::serve binds the caller address before validating loopback-only", "layer": "api-contracts", "file": "src/dungeon/server.rs", "line": 224, "severity": "low"}
+  ],
+  "relationships": [
+    {"type": "Covers", "from": "service-components", "to": "dungeon"},
+    {"type": "Covers", "from": "service-components", "to": "backend"},
+    {"type": "Covers", "from": "service-components", "to": "capabilities"},
+    {"type": "Covers", "from": "service-components", "to": "memory"},
+    {"type": "Covers", "from": "service-components", "to": "update"},
+    {"type": "Covers", "from": "service-components", "to": "oit"},
+    {"type": "Covers", "from": "service-components", "to": "agent-agent_engine"},
+    {"type": "Covers", "from": "runtime-topology", "to": "azork"},
+    {"type": "Covers", "from": "runtime-topology", "to": "azork-oit"},
+    {"type": "Covers", "from": "runtime-topology", "to": "http-server"},
+    {"type": "Covers", "from": "api-contracts", "to": "http-server"},
+    {"type": "Exposes", "from": "http-server", "to": "GET /"},
+    {"type": "Exposes", "from": "http-server", "to": "GET /api/v1/rooms"},
+    {"type": "Exposes", "from": "http-server", "to": "GET /api/v1/rooms/<id>"},
+    {"type": "Exposes", "from": "http-server", "to": "GET /api/v1/resources/<id>"},
+    {"type": "DependsOn", "from": "azork", "to": "dungeon"},
+    {"type": "DependsOn", "from": "azork", "to": "backend"},
+    {"type": "DependsOn", "from": "azork", "to": "capabilities"},
+    {"type": "DependsOn", "from": "azork", "to": "memory"},
+    {"type": "DependsOn", "from": "azork", "to": "update"},
+    {"type": "DependsOn", "from": "azork-oit", "to": "oit"},
+    {"type": "DependsOn", "from": "azork-oit", "to": "backend"},
+    {"type": "DependsOn", "from": "http-server", "to": "dungeon"},
+    {"type": "DependsOn", "from": "dungeon", "to": "backend"},
+    {"type": "Traverses", "from": "1-crawl-mock-large", "to": "backend"},
+    {"type": "Traverses", "from": "1-crawl-mock-large", "to": "dungeon"},
+    {"type": "Traverses", "from": "2-repl-look-move-quests-score", "to": "dungeon"},
+    {"type": "Traverses", "from": "3-oit-dry-run-report", "to": "oit"},
+    {"type": "Traverses", "from": "4-self-update-check", "to": "update"},
+    {"type": "Traverses", "from": "5-capabilities-autodiscover-registry", "to": "capabilities"},
+    {"type": "Traverses", "from": "6-dungeon-snapshot-diff-time-rift", "to": "dungeon"},
+    {"type": "Found", "from": "91", "to": "user-journeys"},
+    {"type": "Found", "from": "92", "to": "api-contracts"}
+  ]
+}

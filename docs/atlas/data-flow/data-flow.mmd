@@ -1,0 +1,73 @@
+flowchart LR
+  subgraph WORLD[REPL world build]
+    ARG[REPL backend: --backend flag or AZORK_BACKEND env] --> SEL[backend::select]
+    SEL --> MOCK[MockBackend fixed world]
+    SEL --> GEN[mock_gen generated World]
+    SEL --> AZ[AzBackend live Azure]
+    AZ --> RUN[ProcessAzRunner]
+    RUN --> AZOUT[az stdout stderr]
+    AZOUT --> SCR1[secrets::scrub]
+    MOCK --> W[World: subscription rooms inventory score]
+    GEN --> W
+    SCR1 --> W
+  end
+  subgraph MAP[crawl map build]
+    CA[CrawlArgs.backend: --backend flag only, default mock] --> CRUN[ProcessAzRunner or FakeAzRunner]
+    CRUN --> GJSON[group list JSON]
+    CRUN --> RJSON[resource list JSON per group]
+    GJSON --> LIM[AimdLimiter throttle retry]
+    RJSON --> LIM
+    LIM --> BUILD[dungeon::map::build_cancellable]
+    BUILD --> RN[ResourceNode id name kind region icon]
+    BUILD --> ROOM[Room id name region x y resources]
+    ROOM --> DMap[DungeonMap subscription rooms edges partial]
+  end
+  subgraph OUTPUT[outputs]
+    DMap --> REND[render::render_html]
+    DMap --> PLAY[playwright::try_render optional]
+    REND --> HTML[--out HTML or guidance]
+    PLAY --> HTML
+    DMap --> SERV[server::serve]
+    SERV --> ROUTE[route]
+    ROUTE --> JSON[HTTP JSON DTOs]
+    JSON --> SCR2[secrets::scrub]
+    DMap --> SNAP[serde_json pretty snapshot]
+    SNAP --> SNAPFILE[snapshot JSON: subscription rooms edges partial]
+  end
+  subgraph DIFF[Time Rift]
+    OLD[old snapshot JSON] --> PO[serde_json::from_str DungeonMap]
+    NEW[new snapshot JSON] --> PN[serde_json::from_str DungeonMap]
+    PO --> DF[diff::diff_maps]
+    PN --> DF
+    DF --> MD[MapDiff]
+    MD --> REP[diff::render_report]
+  end
+  subgraph MEMORY[memory and capability persistence]
+    MP[default_memory_path or AZORK_CACHE_DIR] --> ML[GraphMemory::load]
+    ML --> GM[GraphMemory nodes edges]
+    W --> RR[record_room and remember_resource]
+    RR --> GM
+    INT[record_intent] --> GM
+    FR[record_friction] --> GM
+    CAP[remember_capability] --> GM
+    GM --> REC[recall and summary]
+    GM --> MS[GraphMemory::save]
+    MS --> MP
+    CP[capabilities.tsv path] --> CL[CapabilityRegistry::load]
+    CL --> REG[CapabilityRegistry]
+    REG --> DER[derive help via AzRunner]
+    DER --> APP[apply_learned or learn_group]
+    APP --> REG
+    REG --> CS[CapabilityRegistry::save]
+    CS --> CP
+    REG --> CAP
+  end
+  subgraph REDACT[redaction paths]
+    IN[az output, help text, memory labels content, HTTP JSON] --> SCR[secrets::scrub]
+    SCR --> SAFEOUT[safe printed output]
+    SCR --> SAFESTORE[safe persisted state]
+  end
+  AZOUT --> IN
+  DER --> IN
+  JSON --> IN
+  GM --> IN

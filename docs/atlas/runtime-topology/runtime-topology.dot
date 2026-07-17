@@ -1,0 +1,55 @@
+digraph runtime_topology {
+  rankdir=TB;
+  node [shape=box, style="rounded", fontname="Arial"];
+  edge [fontname="Arial"];
+
+  subgraph cluster_user_shell {
+    label="User shell";
+    user [label="Operator"];
+    azork_repl [label="azork REPL"];
+    azork_crawl [label="azork crawl or dungeon"];
+    azork_oit [label="azork-oit"];
+  }
+
+  subgraph cluster_rust_process {
+    label="Rust process internals";
+    parser [label="parser parse"];
+    world [label="World state"];
+    backend [label="backend select"];
+    mock_backend [label="Mock backend"];
+    az_backend [label="Az backend"];
+    cap_registry [label="Capability registry cache"];
+    graph_memory [label="Graph memory file"];
+    dungeon_map [label="DungeonMap builder"];
+    http_server [label="Embedded HTTP server"];
+  }
+
+  subgraph cluster_loopback {
+    label="Loopback network";
+    port [label="127.0.0.1 port 0 default OS assigned"];
+    api [label="Index and api v1 rooms resources"];
+  }
+
+  subgraph cluster_external_tools {
+    label="External local processes";
+    az_cli [label="az CLI"];
+    azext [label="Azure CLI extension az azork"];
+    node_playwright [label="Node Playwright screenshot tooling"];
+  }
+
+  user -> {azork_repl azork_crawl azork_oit azext};
+  azext -> azork_repl [label="subprocess stdio"];
+  azork_repl -> {parser backend cap_registry graph_memory};
+  parser -> world;
+  backend -> {mock_backend az_backend};
+  az_backend -> az_cli [label="subprocess JSON"];
+  cap_registry -> az_cli [label="learn via AzRunner"];
+  azork_crawl -> dungeon_map;
+  dungeon_map -> az_cli [label="mock runner or az JSON"];
+  azork_crawl -> http_server;
+  http_server -> port;
+  port -> api;
+  azork_oit -> azork_repl [label="drives azork subprocess"];
+  azork_oit -> az_cli [label="guardrailed az subprocess"];
+  node_playwright -> port [label="served map screenshots"];
+}

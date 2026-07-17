@@ -1,0 +1,72 @@
+# Staleness map for the azork code atlas.
+# When `git diff` touches a glob under a layer, that layer is stale and should be rebuilt.
+# Regenerate diagrams with scripts/atlas-render.sh; re-ingest with scripts/atlas-kuzu-ingest.py.
+
+version: 1
+layers:
+  repo-surface:
+    triggers:
+      - "Cargo.toml"
+      - "build.rs"
+      - "src/main.rs"
+      - "src/bin/**"
+      - "azext/**"
+      - "package.json"
+      - "scripts/**"
+  ast-lsp-bindings:
+    mode: lsp-assisted
+    triggers:
+      - "src/lib.rs"
+      - "src/world.rs"
+      - "src/parser.rs"
+      - "src/backend/**"
+      - "src/capabilities/**"
+      - "src/memory/**"
+      - "src/dungeon/map.rs"
+  compile-deps:
+    triggers:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**/mod.rs"
+      - "src/lib.rs"
+  runtime-topology:
+    triggers:
+      - "src/main.rs"
+      - "src/bin/azork-oit.rs"
+      - "src/dungeon/server.rs"
+      - "azext/**"
+  api-contracts:
+    triggers:
+      - "src/dungeon/server.rs"
+      - "src/parser.rs"
+      - "src/dungeon/cli.rs"
+      - "src/dungeon/commands.rs"
+      - "src/bin/azork-oit.rs"
+  data-flow:
+    triggers:
+      - "src/backend/**"
+      - "src/world.rs"
+      - "src/dungeon/map.rs"
+      - "src/dungeon/render.rs"
+      - "src/dungeon/diff.rs"
+      - "src/dungeon/server.rs"
+      - "src/memory/**"
+      - "src/secrets.rs"
+  service-components:
+    triggers:
+      - "src/dungeon/**"
+      - "src/backend/**"
+      - "src/capabilities/**"
+      - "src/memory/**"
+      - "src/update/**"
+      - "src/oit/**"
+      - "src/agent/**"
+      - "src/agent_engine/**"
+  user-journeys:
+    triggers:
+      - "src/main.rs"
+      - "src/parser.rs"
+      - "src/dungeon/**"
+      - "src/oit/**"
+      - "src/capabilities/**"
+      - "src/update/**"

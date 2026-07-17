@@ -1,0 +1,43 @@
+graph TD
+  update_mod[update/mod.rs]
+  check[check.rs startup check gates]
+  network[network.rs GitHub API and downloads]
+  checksum[checksum.rs verify_sha256]
+  archive[archive.rs extract_binary]
+  install[install.rs download_and_replace]
+  post_install[post_install.rs installed-version stamp]
+  gh_release[GithubRelease]
+  gh_asset[GithubAsset]
+  resolved[ResolvedUpdate]
+  errors[UpdateError exit_code]
+  semver[semver Version]
+  cache[cache_path last_update_check]
+  repo[GITHUB_REPO rysweet/azork]
+  max_bytes[MAX_RELEASE_ASSET_BYTES]
+  main_update[main azork update]
+  no_env[AZORK_NO_UPDATE_CHECK]
+
+  update_mod --> check
+  update_mod --> network
+  update_mod --> checksum
+  update_mod --> archive
+  update_mod --> install
+  update_mod --> post_install
+  update_mod --> gh_release
+  update_mod --> gh_asset
+  update_mod --> resolved
+  update_mod --> errors
+  update_mod --> semver
+  update_mod --> cache
+  update_mod --> repo
+  update_mod --> max_bytes
+  check --> no_env
+  check --> cache
+  network --> gh_release
+  network --> gh_asset
+  network --> max_bytes
+  install --> network
+  install --> checksum
+  install --> archive
+  install --> post_install
+  main_update --> update_mod

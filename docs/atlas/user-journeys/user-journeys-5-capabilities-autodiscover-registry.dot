@@ -1,0 +1,4 @@
+digraph journey_5_capabilities_autodiscover_registry { graph [rankdir=LR, label="journey 5 capabilities autodiscover registry", labelloc=t]; node [shape=box, style="rounded"];
+  main [label="main startup"]; registry [label="CapabilityRegistry load groups extend save"]; auto [label="autodiscover stream and apply_learned"]; derive [label="derive_groups derive_group_capabilities"]; runner [label="ProcessAzRunner az help"]; capability [label="Capability records"]; memory [label="GraphMemory remember_capability"]; cache [label="capabilities.tsv"];
+  main -> registry -> auto -> derive -> runner -> derive -> capability -> auto -> main -> registry -> cache; main -> memory; registry -> memory;
+}

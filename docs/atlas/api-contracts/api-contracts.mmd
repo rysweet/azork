@@ -1,0 +1,105 @@
+flowchart TD
+  subgraph CLI[azork CLI surfaces]
+    A[std env args] --> B{crawl or dungeon}
+    A --> U{update}
+    A --> H{help or version}
+    A --> R[REPL startup]
+    B --> CP[dungeon::cli::parse to CrawlArgs]
+    CP --> BE[--backend, -b default mock]
+    CP --> SV[--serve]
+    CP --> PT[--port n default 0]
+    CP --> OUT[--out path]
+    CP --> BD[--budget n default DEFAULT_BUDGET]
+    CP --> PW[--playwright]
+    CP --> MS[--mock-size small medium large huge or COUNTxPER seed]
+    CP --> SN[--snapshot path]
+    CP --> DF[--diff old new]
+    BE --> RC[run_crawl]
+    SV --> RC
+    PT --> RC
+    OUT --> RC
+    BD --> RC
+    PW --> RC
+    MS --> RC
+    SN --> RC
+    DF --> RCD[run_crawl_diff]
+    U --> UR[update::run_update_with]
+    H --> TXT[text output]
+  end
+
+  subgraph CRAWL[run_crawl dispatch targets]
+    RC --> RB[runner: ProcessAzRunner or mock_gen FakeAzRunner]
+    RB --> MB[dungeon::map::build_cancellable]
+    MB --> RH[render::render_html or playwright::try_render]
+    RH --> WF[optional write --out HTML]
+    MB --> WS[optional write --snapshot DungeonMap JSON]
+    MB --> SS[optional server::serve]
+    RCD --> RD[read snapshot files]
+    RD --> DM[dungeon::diff::diff_maps]
+    DM --> DR[dungeon::diff::render_report]
+  end
+
+  subgraph HTTP[embedded HTTP API src/dungeon/server.rs]
+    SS --> LP[bind 127.0.0.1:port; default port 0]
+    LP --> MW[auth middleware: none; loopback only; read-only]
+    MW --> HC[handle_connection]
+    HC --> RT[route map method path]
+    RT --> I[GET /]
+    I --> HTML[text/html via render_html]
+    RT --> RMS[GET /api/v1/rooms]
+    RMS --> RMSDTO[RoomSummary JSON: id name region x y resource_count]
+    RT --> RM[GET /api/v1/rooms/id prefix]
+    RM --> RMDTO[RoomDetail JSON: id name region x y resources]
+    RT --> RS[GET /api/v1/resources/id prefix]
+    RS --> RSDTO[ResourceDetail JSON: id name kind region icon portal_url suggested_commands]
+    RT --> E405[non GET to 405 text]
+    RT --> E404[unknown path or id to 404 text]
+    RMSDTO --> SCR[secrets::scrub]
+    RMDTO --> SCR
+    RSDTO --> SCR
+    SCR --> RESP[RouteResponse status content_type body]
+    HTML --> RESP
+    E405 --> RESP
+    E404 --> RESP
+  end
+
+  subgraph REPL[parser::Command verbs and handle targets]
+    R --> P[parser::parse]
+    P --> LOOK[look,l to World::look]
+    P --> EX[examine,x,inspect,show target to World::examine]
+    P --> GO[go,move,walk,direction aliases to World::go]
+    P --> TAKE[take,get,grab,acquire target to confirm then World::take]
+    P --> DROP[drop,delete,release,rm target to confirm then World::drop_item]
+    P --> LOCK[lock,secure target to World::lock]
+    P --> UNLOCK[unlock,unward,unsecure target to World::unlock]
+    P --> RESIZE[resize,rightsize,right-size,scale,downsize target to World::resize]
+    P --> MON[monitor,light to World::monitor]
+    P --> INV[inventory,i,inv to World::inventory]
+    P --> SCORE[score to World::score]
+    P --> ACH[achievements,badges to achievements_report]
+    P --> QUEST[quest,quests to quests_report]
+    P --> CAST[cast spell or deploy args to cast]
+    P --> LEARN[learn,discover,study group to learn registry]
+    P --> CAPS[capabilities,caps,powers,spells to capabilities_report]
+    P --> FRICTION[friction,note,gripe text to GraphMemory::record_friction]
+    P --> RECALL[recall,remember query to recall_report]
+    P --> MEMORY[memory,mem,recollect to GraphMemory::summary]
+    P --> HELP[help,?,h to help_text]
+    P --> VER[version,ver to version banner]
+    P --> QUIT[quit,q,exit to print score and quit]
+    P --> UNK[unknown to IntentResolver and unresolved friction]
+  end
+
+  subgraph OIT[azork-oit surfaces]
+    OA[std env args] --> OD[--dry-run]
+    OA --> OR[--report path default docs/oit-friction-report.md]
+    OD --> OM[src/bin/azork-oit main]
+    OR --> OM
+    OM -->|non-dry-run only| PF[preflight live subscription]
+    OM --> GR[guardrails assess_cost tag_args guard_mutation]
+    OM --> CAT[oit::usecases::catalog]
+    CAT --> DA[drive_azork]
+    DA --> DET[detect_friction]
+    DET --> MD[ReportData::to_markdown]
+    MD --> WR[write report]
+  end

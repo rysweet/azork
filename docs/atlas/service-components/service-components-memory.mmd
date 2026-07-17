@@ -1,0 +1,47 @@
+graph TD
+  memory_mod[memory/mod.rs]
+  gmem[GraphMemory]
+  node[MemoryNode]
+  mem_edge[Edge]
+  kind[MemoryKind]
+  weights[RecallWeights]
+  remember[remember scrubbed node creation]
+  record_intent[record_intent]
+  record_friction[record_friction]
+  remember_room[remember_room]
+  remember_resource[remember_resource]
+  remember_cap[remember_capability]
+  add_edge[add_edge]
+  recall[recall_ranked]
+  summary[summary]
+  save[save line format]
+  load[load line format]
+  path[default_memory_path]
+  secrets[secrets::scrub]
+  main_loop[main REPL loop]
+
+  memory_mod --> gmem
+  gmem --> node
+  gmem --> mem_edge
+  node --> kind
+  gmem --> weights
+  gmem --> remember
+  remember --> secrets
+  record_intent --> remember
+  record_friction --> remember
+  remember_room --> remember
+  remember_resource --> remember
+  remember_resource --> add_edge
+  remember_cap --> remember
+  gmem --> recall
+  gmem --> summary
+  gmem --> save
+  gmem --> load
+  save --> path
+  load --> path
+  main_loop --> record_intent
+  main_loop --> remember_room
+  main_loop --> remember_resource
+  main_loop --> record_friction
+  main_loop --> recall
+  main_loop --> save

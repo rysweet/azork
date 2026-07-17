@@ -1,0 +1,35 @@
+sequenceDiagram
+  autonumber
+  participant User
+  participant Main as src/main.rs
+  participant Update as update::mod
+  participant Check as update::check
+  participant Network as update::network
+  participant Checksum as update::checksum
+  participant Archive as update::archive
+  participant Install as update::install
+  participant Post as update::post_install
+
+  User->>Main: azork update --check or azork update
+  Main->>Update: run_update_with(check_only)
+  alt check only
+    Update->>Update: resolve_latest_update
+    Update->>Network: fetch_latest_release
+    Network-->>Update: GithubRelease and assets
+    Update->>Update: normalize_tag, is_newer, select_asset
+    Update-->>User: newer available or already latest
+  else install
+    Update->>Update: do_update
+    Update->>Network: fetch_latest_release
+    Network-->>Update: resolved asset and checksum URL
+    Update->>Check: write_last_check best effort
+    Update->>Install: download_and_replace(resolved)
+    Install->>Network: download archive and checksum asset
+    Install->>Checksum: verify_sha256
+    Checksum-->>Install: pass or ChecksumMismatch
+    Install->>Archive: extract_binary traversal-safe
+    Archive-->>Install: extracted azork binary
+    Install->>Install: atomically replace current executable
+    Install->>Post: write installed-version stamp
+    Update-->>User: updated or error exit code
+  end

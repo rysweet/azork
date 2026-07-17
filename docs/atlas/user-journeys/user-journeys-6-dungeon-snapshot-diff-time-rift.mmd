@@ -1,0 +1,31 @@
+sequenceDiagram
+  autonumber
+  participant User
+  participant Main as src/main.rs
+  participant CLI as dungeon::cli
+  participant Runner as AzRunner or FakeAzRunner
+  participant Map as dungeon::map
+  participant Snapshot as serde_json and filesystem
+  participant Diff as dungeon::diff
+
+  User->>Main: azork dungeon --snapshot new.json
+  Main->>CLI: parse snapshot flag
+  CLI-->>Main: CrawlArgs snapshot Some path
+  Main->>Runner: choose backend runner
+  Main->>Map: build_cancellable
+  Map->>Runner: az group list and resource list JSON
+  Runner-->>Map: subscription estate JSON
+  Map-->>Main: DungeonMap partial flag false
+  Main->>Snapshot: serde_json::to_string_pretty(DungeonMap)
+  Snapshot-->>Main: snapshot JSON schema subscription rooms edges partial
+  Main->>Snapshot: write snapshot path
+  User->>Main: azork dungeon --diff old.json new.json
+  Main->>CLI: parse diff old new
+  CLI-->>Main: CrawlArgs diff Some old new
+  Main->>Snapshot: read_to_string old and new
+  Snapshot-->>Main: raw JSON
+  Main->>Snapshot: serde_json::from_str DungeonMap
+  Main->>Diff: diff_maps(old, new)
+  Diff-->>Main: MapDiff rooms and resources added removed changed
+  Main->>Diff: render_report
+  Diff-->>User: Time Rift report text

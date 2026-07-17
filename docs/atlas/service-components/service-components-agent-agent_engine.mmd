@@ -1,0 +1,42 @@
+graph TD
+  agent_mod[agent/mod.rs]
+  resolution[Resolution enum]
+  adapter_trait[Adapter trait]
+  mock_adapter[MockAdapter]
+  resolver[IntentResolver]
+  infer[infer_group keyword table]
+  truncate[truncate_intent MAX_INTENT_ECHO_LEN]
+  registry[CapabilityRegistry]
+  capability[Capability]
+  main_unknown[main Command::Unknown]
+  memory[GraphMemory record_friction]
+  engine_mod[agent_engine/mod.rs]
+  azork_adapter[AzorkAdapter]
+  recipe_adapter[recipe_runner_rs Adapter]
+  cli_subprocess[CLISubprocessAdapter]
+  run_recipe[run_recipe]
+  intent_recipe[INTENT_RESOLUTION_RECIPE]
+  recipe_result[RecipeResult]
+
+  agent_mod --> resolution
+  agent_mod --> adapter_trait
+  agent_mod --> mock_adapter
+  agent_mod --> resolver
+  agent_mod --> infer
+  agent_mod --> truncate
+  mock_adapter --> registry
+  mock_adapter --> resolution
+  resolver --> adapter_trait
+  resolver --> registry
+  main_unknown --> resolver
+  main_unknown --> memory
+  registry --> capability
+  engine_mod --> azork_adapter
+  engine_mod --> intent_recipe
+  azork_adapter --> recipe_adapter
+  azork_adapter --> cli_subprocess
+  azork_adapter --> mock_adapter
+  azork_adapter --> registry
+  run_recipe --> azork_adapter
+  run_recipe --> recipe_result
+  intent_recipe --> run_recipe
