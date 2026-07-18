@@ -565,6 +565,17 @@ server, not something to expose beyond `localhost`. It has no write endpoints:
 every route is read-only, mirroring the read-only guarantee of enumeration
 itself.
 
+**Loopback is validated before anything is bound.** `serve()` parses and
+checks `addr.ip().is_loopback()` *before* it ever calls
+`TcpListener::bind(..)`. If a caller-supplied bind address is not loopback
+(for example `0.0.0.0:0` or any other non-`127.0.0.1`/`::1` address), `serve()`
+returns a refusal error immediately and no socket is ever opened — there is no
+window, however brief, during which a non-loopback listener could accept a
+connection. This validate-then-bind ordering is enforced by a unit test that
+asserts `serve()` rejects a non-loopback address and that no bind is
+attempted (see `serve_never_binds_a_non_loopback_socket_before_rejecting_it`
+in `tests/dungeon_tests.rs`).
+
 ## The JSON API
 
 The JSON API is versioned under `/api/v1` so the client-side map JS and any
@@ -700,6 +711,10 @@ similar), never anything that mutates:
   so a hostile resource name can't inject markup or script into the page.
 - **Loopback-only server.** The embedded HTTP server binds to `127.0.0.1`
   only, never a wildcard address, and sends no permissive CORS headers.
+  Validation happens *before* binding: `serve()` checks
+  `addr.ip().is_loopback()` first and returns an error without ever calling
+  `TcpListener::bind` if the address isn't loopback, so a misconfigured or
+  malicious bind address can never be opened even momentarily.
 
 ## Scaling to large subscriptions
 

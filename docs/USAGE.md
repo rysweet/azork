@@ -378,6 +378,39 @@ Flags:
 | `--dry-run` | Drives azork's mock backend only; never touches a live subscription. |
 | `--report PATH` | Where to write the friction report (default `docs/oit-friction-report.md`). |
 
+#### `--dry-run` is genuinely offline
+
+`--dry-run` is a hard guarantee, not just a preference: no code path reachable
+from a dry-run campaign ever shells out to the real `az` binary, regardless of
+what's on `$PATH` or what the ambient environment looks like. This matters
+because the dry-run catalog exercises the same use cases as a live run,
+including `learn <group>`-style capability discovery — which, without this
+guarantee, would otherwise reach the capabilities-derive path and invoke
+`az <group> --help` for real.
+
+Two things combine to make this true:
+
+1. **Autodiscovery is force-disabled for the child process.** `azork-oit
+   --dry-run` spawns the `azork` binary under test with
+   `AZORK_CACHE_DIR` set to an isolated scratch directory *and*
+   `AZORK_AUTODISCOVER=0` set unconditionally — overriding whatever the
+   parent shell's `AZORK_AUTODISCOVER` is, so the child never performs
+   startup auto-discovery against a real `az` install. See
+   [Auto-Discovery configuration](AUTODISCOVERY.md#configuration).
+2. **`learn`/capability-derive use cases run against a stub runner.** When the
+   dry-run catalog exercises `learn group` or `learn storage` (or any other
+   capability-derive use case), it does so through a fake/mock `az` runner
+   that returns canned, offline capability data instead of the real
+   `ProcessAzRunner`, which is what would otherwise call
+   `Command::new("az")`. The real `ProcessAzRunner` is only ever constructed
+   on the live (non-`--dry-run`) path.
+
+The net effect: a `--dry-run` campaign is safe to run with no `az` CLI
+installed, no network access, and no Azure credentials configured at all —
+and this is verified by a regression test that asserts zero invocations of
+the real `az` binary across an entire dry-run campaign (see
+`dry_run_never_invokes_the_real_az_binary` in `tests/oit_binary_tests.rs`).
+
 Every live run is bound by hard guardrails enforced in code
 (`src/oit/guardrails.rs`), not merely by convention:
 
