@@ -60,6 +60,16 @@ Example — disable auto-discovery for CI/offline runs:
 AZORK_AUTODISCOVER=0 azork
 ```
 
+**`azork-oit --dry-run` always sets this for you.** The OIT agent's dry-run
+mode spawns its `azork` child with `AZORK_AUTODISCOVER=0` forced, regardless
+of the value (or absence) of `AZORK_AUTODISCOVER` in the parent environment.
+This is what makes `--dry-run` genuinely offline: without it, startup
+auto-discovery in the child would otherwise reach out to a real `az` install
+the moment the child process starts, before any use case even runs. See
+[`azork-oit --dry-run` is genuinely offline](USAGE.md#--dry-run-is-genuinely-offline)
+for the full picture (autodiscovery kill-switch plus a stubbed `az` runner for
+`learn`-style use cases).
+
 ## API (module `src/capabilities/autodiscover.rs`)
 
 Pure, synchronous, offline-testable functions — no threading inside them;
