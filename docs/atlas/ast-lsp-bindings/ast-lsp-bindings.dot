@@ -1,0 +1,42 @@
+digraph ast_lsp_bindings {
+  rankdir=LR;
+  node [shape=box, style="rounded", fontname="Arial"];
+  edge [fontname="Arial"];
+
+  backend_trait [label="Backend trait src/backend/mod.rs"];
+  select [label="backend select"];
+  az_impl [label="AzBackend impl Backend"];
+  mock_impl [label="MockBackend impl Backend"];
+  mock_gen [label="mock_gen sized world"];
+  world [label="World src/world.rs"];
+  parser [label="Command enum and parse"];
+  main [label="main handle dispatch"];
+  crawl [label="run_crawl"];
+  dungeon_build [label="DungeonMap and build_cancellable"];
+  server [label="server serve and route"];
+  registry [label="CapabilityRegistry"];
+  capability [label="Capability"];
+  agent [label="IntentResolver"];
+  memory [label="GraphMemory"];
+  az_runner [label="AzRunner trait"];
+  secrets [label="secrets scrub"];
+  oit [label="azork-oit driver"];
+  oit_lib [label="oit guardrails report usecases"];
+  dead [label="No clear dead public target symbols found", style="rounded,dashed"];
+
+  backend_trait -> {az_impl mock_impl};
+  select -> {backend_trait az_impl mock_impl};
+  mock_impl -> {world mock_gen};
+  az_impl -> {az_runner world secrets};
+  main -> {select world registry memory agent crawl dungeon_build server};
+  parser -> main;
+  agent -> registry;
+  registry -> {capability az_runner};
+  memory -> secrets;
+  crawl -> dungeon_build;
+  dungeon_build -> az_runner;
+  server -> {secrets dungeon_build};
+  oit -> oit_lib;
+  dead -> backend_trait [style=dashed, label="cargo check quiet"];
+  dead -> memory [style=dashed, label="lower helpers are library or test surface"];
+}

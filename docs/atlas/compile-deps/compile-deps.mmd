@@ -1,0 +1,83 @@
+flowchart TD
+    Crate[azork crate]
+    Crate --> D_anyhow[anyhow version 1]
+    Crate --> D_semver[semver version 1]
+    Crate --> D_serde[serde version 1 derive]
+    Crate --> D_serde_json[serde_json version 1]
+    Crate --> D_sha2[sha2 version 0.10]
+    Crate --> D_flate2[flate2 version 1]
+    Crate --> D_tar[tar version 0.4]
+    Crate --> D_ureq[ureq version 2]
+    Crate --> D_recipe[recipe-runner-rs git rev 90b91f94]
+
+    D_flate2 --> T_crc32fast[crc32fast]
+    D_flate2 --> T_miniz[miniz_oxide]
+    D_recipe --> T_clap[clap]
+    D_recipe --> T_dirs[dirs]
+    D_recipe --> T_env_logger[env_logger]
+    D_recipe --> T_regex[regex]
+    D_recipe --> T_yaml[serde_yaml]
+    D_recipe --> T_tempfile[tempfile]
+    D_recipe --> T_thiserror[thiserror]
+    D_recipe --> T_tracing[tracing]
+    D_recipe --> T_uuid[uuid]
+    D_recipe --> T_hex[hex]
+    D_recipe --> T_log[log]
+    D_recipe --> T_libc[libc]
+
+    Lib[src/lib.rs]
+    Main[src/main.rs]
+    OitBin[src/bin/azork-oit.rs]
+    Backend[src/backend]
+    World[src/world.rs]
+    Parser[src/parser.rs]
+    Dungeon[src/dungeon]
+    Capabilities[src/capabilities]
+    Memory[src/memory]
+    Update[src/update]
+    Agent[src/agent]
+    AgentEngine[src/agent_engine]
+    Oit[src/oit]
+    AzRunner[src/az_runner.rs]
+    Secrets[src/secrets.rs]
+    Quests[src/quests.rs]
+
+    Lib --> Backend
+    Lib --> World
+    Lib --> Parser
+    Lib --> Dungeon
+    Lib --> Capabilities
+    Lib --> Memory
+    Lib --> Update
+    Lib --> Agent
+    Lib --> AgentEngine
+    Lib --> Oit
+    Lib --> Quests
+    Lib --> Secrets
+    Lib --> AzRunner
+    Main --> Backend
+    Main --> World
+    Main --> Parser
+    Main --> Dungeon
+    Main --> Capabilities
+    Main --> Memory
+    Main --> Update
+    Main --> Agent
+    Main --> AzRunner
+    Main --> Quests
+    Backend --> World
+    Backend --> Parser
+    Backend --> AzRunner
+    Backend --> Dungeon
+    Backend --> Secrets
+    Dungeon --> AzRunner
+    Dungeon --> Secrets
+    Capabilities --> AzRunner
+    Capabilities --> Secrets
+    Agent --> Capabilities
+    AgentEngine --> Agent
+    AgentEngine --> Capabilities
+    Memory --> Secrets
+    World --> Parser
+    Quests --> World
+    OitBin --> Oit

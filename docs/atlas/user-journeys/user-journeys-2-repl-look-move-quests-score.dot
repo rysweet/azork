@@ -1,0 +1,4 @@
+digraph journey_2_repl_look_move_quests_score { graph [rankdir=LR, label="journey 2 repl look move quests score", labelloc=t]; node [shape=box, style="rounded"];
+  user [label="User REPL commands: look, move north, quests, score"]; main [label="src/main.rs REPL loop"]; parser [label="parser::parse"]; look [label="Command::Look"]; go [label="Command::Go North"]; quest [label="Command::Quest"]; score [label="Command::Score"]; world [label="World"]; quests [label="quests_report"]; memory [label="GraphMemory record and save"]; grue [label="run_grue_check"];
+  user -> main -> memory; main -> parser -> look -> world; parser -> go -> world; parser -> quest -> quests; parser -> score -> world; world -> main; quests -> main; main -> grue; main -> memory;
+}

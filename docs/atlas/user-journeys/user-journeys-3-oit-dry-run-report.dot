@@ -1,0 +1,4 @@
+digraph journey_3_oit_dry_run_report { graph [rankdir=LR, label="journey 3 oit dry-run report", labelloc=t]; node [shape=box, style="rounded"];
+  user [label="User: azork-oit --dry-run --report path"]; oit [label="azork-oit main"]; catalog [label="oit::usecases::catalog"]; azork [label="drive_azork azork --backend mock"]; split [label="split_by_prompt"]; detect [label="detect_friction"]; run [label="UseCaseRun"]; data [label="ReportData"]; md [label="to_markdown"]; fs [label="write report"];
+  user -> oit -> catalog -> oit -> azork -> split -> detect -> run -> data -> md -> fs;
+}

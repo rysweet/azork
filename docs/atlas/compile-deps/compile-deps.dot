@@ -1,0 +1,69 @@
+digraph compile_deps {
+  rankdir=TB;
+  node [shape=box, style="rounded", fontname="Arial"];
+  edge [fontname="Arial"];
+
+  subgraph cluster_external {
+    label="Cargo dependencies";
+    crate [label="azork crate"];
+    anyhow [label="anyhow version 1"];
+    semver [label="semver version 1"];
+    serde [label="serde version 1 derive"];
+    serde_json [label="serde_json version 1"];
+    sha2 [label="sha2 version 0.10"];
+    flate2 [label="flate2 version 1"];
+    tar [label="tar version 0.4"];
+    ureq [label="ureq version 2"];
+    recipe [label="recipe-runner-rs git rev 90b91f94"];
+    crc32fast [label="crc32fast"];
+    miniz [label="miniz_oxide"];
+    clap [label="clap"];
+    dirs [label="dirs"];
+    env_logger [label="env_logger"];
+    regex [label="regex"];
+    yaml [label="serde_yaml"];
+    tempfile [label="tempfile"];
+    thiserror [label="thiserror"];
+    tracing [label="tracing"];
+    uuid [label="uuid"];
+    hex [label="hex"];
+    log [label="log"];
+    libc [label="libc"];
+  }
+
+  subgraph cluster_internal {
+    label="Internal module use graph";
+    lib [label="src/lib.rs"];
+    main [label="src/main.rs"];
+    oit_bin [label="src/bin/azork-oit.rs"];
+    backend [label="src/backend"];
+    world [label="src/world.rs"];
+    parser [label="src/parser.rs"];
+    dungeon [label="src/dungeon"];
+    capabilities [label="src/capabilities"];
+    memory [label="src/memory"];
+    update [label="src/update"];
+    agent [label="src/agent"];
+    agent_engine [label="src/agent_engine"];
+    oit [label="src/oit"];
+    az_runner [label="src/az_runner.rs"];
+    secrets [label="src/secrets.rs"];
+    quests [label="src/quests.rs"];
+  }
+
+  crate -> {anyhow semver serde serde_json sha2 flate2 tar ureq recipe};
+  flate2 -> {crc32fast miniz};
+  recipe -> {clap dirs env_logger regex yaml tempfile thiserror tracing uuid hex log libc};
+
+  lib -> {backend world parser dungeon capabilities memory update agent agent_engine oit quests secrets az_runner};
+  main -> {backend world parser dungeon capabilities memory update agent az_runner quests};
+  backend -> {world parser az_runner dungeon secrets};
+  dungeon -> {az_runner secrets};
+  capabilities -> {az_runner secrets};
+  agent -> capabilities;
+  agent_engine -> {agent capabilities};
+  memory -> secrets;
+  world -> parser;
+  quests -> world;
+  oit_bin -> oit;
+}

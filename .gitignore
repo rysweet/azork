@@ -14,3 +14,8 @@ node_modules/
 
 # git worktrees used for parallel fix workstreams (not project code)
 /worktrees/
+
+# Code atlas scratch/build artifacts
+/.kuzu-atlas
+/.kuzu-atlas.wal
+docs/atlas/_hunt-*.md

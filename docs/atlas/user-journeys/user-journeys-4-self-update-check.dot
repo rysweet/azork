@@ -1,0 +1,5 @@
+digraph journey_4_self_update_check { graph [rankdir=LR, label="journey 4 self-update check", labelloc=t]; node [shape=box, style="rounded"];
+  user [label="User: azork update --check or update"]; main [label="src/main.rs update match"]; update [label="update::run_update_with"]; resolve [label="resolve_latest_update"]; network [label="network::fetch_latest_release and download"]; semver [label="normalize_tag is_newer select_asset"]; check [label="check cache write_last_check"]; install [label="install::download_and_replace"]; checksum [label="verify_sha256"]; archive [label="extract_binary traversal-safe"]; post [label="post_install stamp"]; result [label="stdout or UpdateError exit_code"];
+  user -> main -> update; update -> resolve -> network -> semver -> result [label="--check only"]; update -> do_update [label="install"]; do_update -> check [label="write_last_check best effort"]; do_update -> install -> network; install -> checksum -> archive -> post -> result;
+  do_update [label="do_update"];
+}

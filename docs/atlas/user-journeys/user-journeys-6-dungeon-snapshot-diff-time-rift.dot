@@ -1,0 +1,4 @@
+digraph journey_6_dungeon_snapshot_diff_time_rift { graph [rankdir=LR, label="journey 6 dungeon snapshot diff time rift", labelloc=t]; node [shape=box, style="rounded"];
+  user_snap [label="User: azork dungeon --snapshot new.json"]; main [label="src/main.rs run_crawl"]; cli [label="dungeon::cli parse"]; runner [label="AzRunner or FakeAzRunner"]; map [label="build_cancellable to DungeonMap"]; snapshot [label="serde_json pretty snapshot file"]; user_diff [label="User: azork dungeon --diff old.json new.json"]; read [label="read_to_string and from_str DungeonMap"]; diff [label="dungeon::diff::diff_maps"]; mapdiff [label="MapDiff added removed changed"]; report [label="render_report Time Rift text"];
+  user_snap -> main -> cli -> runner -> map -> snapshot; user_diff -> main -> cli -> read -> diff -> mapdiff -> report;
+}

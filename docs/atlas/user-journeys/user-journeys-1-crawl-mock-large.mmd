@@ -1,0 +1,32 @@
+sequenceDiagram
+  autonumber
+  participant User
+  participant Main as src/main.rs
+  participant CLI as dungeon::cli
+  participant MockGen as backend::mock_gen
+  participant Runner as FakeAzRunner
+  participant Map as dungeon::map
+  participant Render as dungeon::render
+  participant File as optional --out
+
+  User->>Main: azork crawl --backend mock --mock-size large
+  Main->>CLI: is_crawl_subcommand and parse
+  CLI-->>Main: CrawlArgs backend mock mock_size large
+  Main->>MockGen: resolve_crawl_mock_size large
+  MockGen-->>Main: MockSizeParams large and FakeAzRunner
+  Main->>Map: build_cancellable(runner, budget, cancel)
+  Map->>Runner: az group list -o json
+  Runner-->>Map: generated resource groups JSON
+  loop per resource group in parallel
+    Map->>Runner: az resource list --resource-group name -o json
+    Runner-->>Map: generated resources JSON
+    Map->>Map: ResourceNode and Room with region-biased x y
+  end
+  Map-->>Main: DungeonMap subscription rooms edges partial
+  Main->>Render: render_html(DungeonMap)
+  Render-->>Main: HTML map
+  alt --out supplied
+    Main->>File: write HTML
+  else no --out and no --serve
+    Main-->>User: guidance to pass --out or --serve
+  end

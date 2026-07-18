@@ -1,0 +1,48 @@
+graph TD
+  oit_mod[oit/mod.rs]
+  bin[src/bin/azork-oit.rs]
+  guardrails[guardrails.rs]
+  usecases[usecases.rs]
+  report[report.rs]
+  category[Category]
+  usecase[UseCase]
+  catalog[catalog]
+  friction[Friction and FrictionKind]
+  detect[detect_friction]
+  split[split_by_prompt]
+  report_data[ReportData]
+  usecase_run[UseCaseRun]
+  markdown[to_markdown]
+  preflight[preflight]
+  create[create_resource_group create_storage]
+  teardown[teardown_all]
+  drive[drive_azork]
+  az_cli[az CLI]
+  azork_bin[azork binary]
+
+  oit_mod --> guardrails
+  oit_mod --> usecases
+  oit_mod --> report
+  bin --> preflight
+  bin --> guardrails
+  bin --> create
+  bin --> catalog
+  bin --> drive
+  bin --> detect
+  bin --> report_data
+  bin --> teardown
+  bin --> markdown
+  usecases --> category
+  usecases --> usecase
+  usecases --> catalog
+  usecases --> friction
+  usecases --> detect
+  usecases --> split
+  report --> report_data
+  report --> usecase_run
+  report --> markdown
+  report --> friction
+  preflight --> az_cli
+  create --> az_cli
+  teardown --> az_cli
+  drive --> azork_bin

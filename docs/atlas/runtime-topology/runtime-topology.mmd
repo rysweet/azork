@@ -1,0 +1,53 @@
+flowchart TD
+    subgraph UserShell[User shell]
+        User[Operator]
+        AzorkRepl[azork REPL]
+        AzorkCrawl[azork crawl or dungeon]
+        AzorkOit[azork-oit]
+    end
+
+    subgraph RustProcess[Rust process internals]
+        Parser[parser parse]
+        World[World state]
+        Backend[backend select]
+        MockBackend[Mock backend]
+        AzBackend[Az backend]
+        CapRegistry[Capability registry cache]
+        GraphMemory[Graph memory file]
+        DungeonMap[DungeonMap builder]
+        HttpServer[Embedded HTTP server]
+    end
+
+    subgraph Localhost[Loopback network]
+        Port[127.0.0.1 port 0 default OS assigned]
+        Api[Index and api v1 rooms resources]
+    end
+
+    subgraph ExternalTools[External local processes]
+        AzCli[az CLI]
+        Azext[Azure CLI extension az azork]
+        NodePlaywright[Node Playwright screenshot tooling]
+    end
+
+    User --> AzorkRepl
+    User --> AzorkCrawl
+    User --> AzorkOit
+    User --> Azext
+    Azext -->|subprocess stdio| AzorkRepl
+    AzorkRepl --> Parser
+    Parser --> World
+    AzorkRepl --> Backend
+    Backend --> MockBackend
+    Backend --> AzBackend
+    AzBackend -->|subprocess JSON| AzCli
+    AzorkRepl --> CapRegistry
+    CapRegistry -->|learn via AzRunner| AzCli
+    AzorkRepl --> GraphMemory
+    AzorkCrawl --> DungeonMap
+    DungeonMap -->|mock runner or az JSON| AzCli
+    AzorkCrawl --> HttpServer
+    HttpServer --> Port
+    Port --> Api
+    AzorkOit -->|drives azork subprocess| AzorkRepl
+    AzorkOit -->|guardrailed az subprocess| AzCli
+    NodePlaywright -->|reads served map screenshots| Port

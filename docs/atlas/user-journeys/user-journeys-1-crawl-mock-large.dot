@@ -1,0 +1,4 @@
+digraph journey_1_crawl_mock_large { graph [rankdir=LR, label="journey 1 crawl mock large", labelloc=t]; node [shape=box, style="rounded"];
+  user [label="User: azork crawl --backend mock --mock-size large"]; main [label="src/main.rs run_crawl"]; cli [label="dungeon::cli parse CrawlArgs"]; mockgen [label="backend::mock_gen MockSizeParams large"]; runner [label="FakeAzRunner"]; map [label="dungeon::map build_cancellable"]; groups [label="az group list JSON"]; resources [label="az resource list JSON per group"]; room [label="Room with region-biased x/y"]; dmap [label="DungeonMap"]; render [label="render_html"]; file [label="optional --out HTML"]; guidance [label="stdout guidance when no output target"];
+  user -> main -> cli -> main -> mockgen -> runner -> map; map -> groups -> map; map -> resources -> room -> dmap -> render; render -> file; render -> guidance;
+}

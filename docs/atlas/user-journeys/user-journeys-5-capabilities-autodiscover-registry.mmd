@@ -1,0 +1,31 @@
+sequenceDiagram
+  autonumber
+  participant Main as src/main.rs
+  participant Registry as CapabilityRegistry
+  participant Auto as capabilities::autodiscover
+  participant Runner as ProcessAzRunner
+  participant Derive as capabilities::derive
+  participant Memory as GraphMemory
+  participant Cache as capabilities.tsv
+
+  Main->>Registry: load(default_cache_path)
+  Registry-->>Main: known groups
+  Main->>Auto: autodiscover_enabled
+  Main->>Main: spawn_autodiscovery known groups cancel flag
+  Main->>Auto: stream_startup_autodiscovery(runner, known, cancel, tx)
+  Auto->>Derive: derive_groups(runner)
+  Derive->>Runner: az --help
+  Runner-->>Derive: help text stdout
+  Derive-->>Auto: missing group names
+  loop each missing group until cancelled
+    Auto->>Derive: derive_group_capabilities(group)
+    Derive->>Runner: az group --help
+    Runner-->>Derive: group help text
+    Derive-->>Auto: Vec Capability
+    Auto-->>Main: GroupResult over channel
+  end
+  Main->>Auto: drain_discovery then apply_learned
+  Auto->>Registry: extend capabilities
+  Main->>Memory: remember_capability for learned group
+  Main->>Registry: save(cache_path)
+  Registry->>Cache: line-format capabilities cache

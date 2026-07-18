@@ -1,0 +1,39 @@
+sequenceDiagram
+  autonumber
+  participant User
+  participant Main as src/main.rs REPL
+  participant Parser as parser::parse
+  participant World as world::World
+  participant Quests as quests_report
+  participant Memory as GraphMemory
+  participant Grue as run_grue_check
+
+  User->>Main: azork
+  Main->>World: backend::select then build_world
+  World-->>Main: starting room and score state
+  Main->>Memory: load and record_room
+  User->>Main: look
+  Main->>Memory: record_intent look
+  Main->>Parser: parse look
+  Parser-->>Main: Command::Look
+  Main->>World: look()
+  World-->>User: current room description
+  Main->>Grue: grue_check after turn
+  User->>Main: move north
+  Main->>Memory: record_intent move north
+  Main->>Parser: parse move north
+  Parser-->>Main: Command::Go(Direction::North)
+  Main->>World: go(North)
+  World-->>User: destination description or blocked message
+  Main->>Memory: record_room current and remember_resource
+  User->>Main: quests
+  Main->>Parser: parse quests
+  Parser-->>Main: Command::Quest
+  Main->>Quests: quests_report(world)
+  Quests-->>User: governance quest progress
+  User->>Main: score
+  Main->>Parser: parse score
+  Parser-->>Main: Command::Score
+  Main->>World: score()
+  World-->>User: governance posture
+  Main->>Memory: save on exit

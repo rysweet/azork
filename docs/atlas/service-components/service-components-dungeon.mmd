@@ -1,0 +1,44 @@
+graph TD
+  dungeon_mod[src/dungeon/mod.rs]
+  cli[cli.rs CrawlArgs parse]
+  map[map.rs DungeonMap build_cancellable]
+  concurrency[concurrency.rs AimdLimiter throttle retry]
+  render[render.rs render_html escape_html]
+  server[server.rs loopback HTTP route serve]
+  diff[diff.rs diff_maps render_report]
+  commands[commands.rs suggested_commands]
+  links[links.rs portal_url]
+  icons[icons.rs icon_for]
+  icon_assets[icon_assets.rs embedded SVG assets]
+  decorations[decorations.rs decorative placement]
+  playwright[playwright.rs try_render]
+  type_table[type_table.rs resource type metadata]
+  validate[validate.rs resource id and RG validation]
+  az_runner[az_runner::AzRunner]
+  secrets[secrets::scrub]
+  serde[serde Serialize Deserialize]
+
+  dungeon_mod --> cli
+  dungeon_mod --> map
+  dungeon_mod --> concurrency
+  dungeon_mod --> render
+  dungeon_mod --> server
+  dungeon_mod --> diff
+  map --> az_runner
+  map --> concurrency
+  map --> icons
+  map --> validate
+  map --> serde
+  map --> type_table
+  render --> decorations
+  render --> links
+  render --> icon_assets
+  render --> secrets
+  server --> render
+  server --> links
+  server --> commands
+  server --> secrets
+  diff --> map
+  commands --> type_table
+  icons --> type_table
+  playwright --> render

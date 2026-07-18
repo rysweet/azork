@@ -1,0 +1,50 @@
+digraph repo_surface {
+  rankdir=TB;
+  node [shape=box, style="rounded", fontname="Arial"];
+  edge [fontname="Arial"];
+
+  repo [label="azork repository"];
+  src [label="src Rust crate"];
+  tests [label="tests integration suites"];
+  azext [label="azext Azure CLI extension"];
+  scripts [label="scripts Node tooling"];
+  assets [label="assets SVG icons and decorations"];
+  docs [label="docs documentation and atlas"];
+  memory_store [label="memory-store companion crate"];
+  cargo [label="Cargo.toml Rust package"];
+  build_rs [label="build.rs build script"];
+  py_setup [label="azext setup.py Python package"];
+  package_json [label="package.json Playwright tooling"];
+  lib [label="src/lib.rs library modules"];
+  bin_azork [label="azork binary"];
+  bin_oit [label="azork-oit binary"];
+  main_entry [label="src/main.rs main"];
+  oit_entry [label="src/bin/azork-oit.rs main"];
+  backend [label="src/backend"];
+  dungeon [label="src/dungeon"];
+  capabilities [label="src/capabilities"];
+  memory [label="src/memory"];
+  update [label="src/update"];
+  oit [label="src/oit"];
+  world [label="src/world.rs"];
+  parser [label="src/parser.rs"];
+  secrets [label="src/secrets.rs"];
+  az_runner [label="src/az_runner.rs"];
+  agent [label="src/agent and agent_engine"];
+  azext_pkg [label="azext_azork commands"];
+  screenshot_script [label="scripts/capture-real-screenshots.mjs"];
+  dungeon_render [label="dungeon render icon assets"];
+  atlas [label="docs/atlas generated layers"];
+  native_memory [label="memory-store/src/lib.rs"];
+
+  repo -> {src tests azext scripts assets docs memory_store cargo build_rs py_setup package_json};
+  cargo -> {lib bin_azork bin_oit};
+  bin_azork -> main_entry;
+  bin_oit -> oit_entry;
+  src -> {backend dungeon capabilities memory update oit world parser secrets az_runner agent};
+  py_setup -> azext_pkg;
+  package_json -> screenshot_script;
+  assets -> dungeon_render;
+  docs -> atlas;
+  memory_store -> native_memory;
+}

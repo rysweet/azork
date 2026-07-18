@@ -1,0 +1,27 @@
+sequenceDiagram
+  autonumber
+  participant User
+  participant OIT as src/bin/azork-oit.rs
+  participant Catalog as oit::usecases::catalog
+  participant Azork as azork binary
+  participant Usecases as oit::usecases
+  participant Report as oit::report
+  participant FS as report path
+
+  User->>OIT: azork-oit --dry-run --report path
+  OIT->>OIT: parse --dry-run and --report
+  OIT->>OIT: locate_azork_bin
+  OIT->>Catalog: catalog()
+  Catalog-->>OIT: Vec UseCase
+  loop each UseCase script
+    OIT->>Azork: drive_azork --backend mock with script plus quit
+    Azork-->>OIT: stdout transcript
+    OIT->>Usecases: split_by_prompt(transcript)
+    OIT->>Usecases: detect_friction(command, chunk)
+    Usecases-->>OIT: optional Friction
+    OIT->>Report: append UseCaseRun
+  end
+  OIT->>Report: ReportData::to_markdown
+  Report-->>OIT: Markdown friction report
+  OIT->>FS: create parent dirs and write report
+  OIT-->>User: done summary

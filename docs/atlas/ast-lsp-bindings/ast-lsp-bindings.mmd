@@ -1,0 +1,52 @@
+flowchart LR
+    BackendTrait[Backend trait src/backend/mod.rs]
+    Select[backend select]
+    AzImpl[AzBackend impl Backend]
+    MockImpl[MockBackend impl Backend]
+    MockGen[mock_gen sized world]
+    World[World src/world.rs]
+    Parser[Command enum and parse]
+    Main[main handle dispatch]
+    Crawl[run_crawl]
+    DungeonBuild[DungeonMap and build_cancellable]
+    Server[server serve and route]
+    Registry[CapabilityRegistry]
+    Capability[Capability]
+    Agent[IntentResolver]
+    Memory[GraphMemory]
+    AzRunner[AzRunner trait]
+    Secrets[secrets scrub]
+    Oit[azork-oit driver]
+    OitLib[oit guardrails report usecases]
+    Dead[No clear dead public target symbols found]
+
+    BackendTrait --> AzImpl
+    BackendTrait --> MockImpl
+    Select --> BackendTrait
+    Select --> AzImpl
+    Select --> MockImpl
+    MockImpl --> World
+    MockImpl --> MockGen
+    AzImpl --> AzRunner
+    AzImpl --> World
+    AzImpl --> Secrets
+    Main --> Select
+    Main --> World
+    Parser --> Main
+    Main --> Registry
+    Main --> Memory
+    Main --> Agent
+    Main --> DungeonBuild
+    Main --> Server
+    Agent --> Registry
+    Registry --> Capability
+    Registry --> AzRunner
+    Memory --> Secrets
+    Main --> Crawl
+    Crawl --> DungeonBuild
+    DungeonBuild --> AzRunner
+    Server --> Secrets
+    Server --> DungeonBuild
+    Oit --> OitLib
+    Dead -. cargo check quiet and rg cross refs .- BackendTrait
+    Dead -. public lower memory helpers mostly library and tests .- Memory

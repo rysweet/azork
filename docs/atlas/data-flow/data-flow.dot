@@ -1,0 +1,15 @@
+digraph data_flow {
+  graph [rankdir=LR, label="data-flow", labelloc=t]; node [shape=box, style="rounded"];
+  arg [label="REPL backend: --backend or AZORK_BACKEND"]; select [label="backend::select"]; mock [label="MockBackend fixed world"]; gen [label="mock_gen generated World"]; az [label="AzBackend live Azure"]; runner [label="ProcessAzRunner"]; azout [label="az stdout stderr"]; scrub1 [label="secrets::scrub"]; world [label="World subscription rooms inventory score"];
+  arg -> select; select -> mock -> world; select -> gen -> world; select -> az -> runner -> azout -> scrub1 -> world;
+  ca [label="CrawlArgs.backend (--backend flag only, default mock)"]; crun [label="ProcessAzRunner or FakeAzRunner"]; gjson [label="group list JSON"]; rjson [label="resource list JSON per group"]; lim [label="AimdLimiter throttle retry"]; build [label="build_cancellable"]; rn [label="ResourceNode id name kind region icon"]; room [label="Room id name region x y resources"]; dmap [label="DungeonMap subscription rooms edges partial"];
+  ca -> crun; crun -> gjson -> lim; crun -> rjson -> lim; lim -> build -> rn -> room -> dmap;
+  render [label="render_html"]; play [label="playwright optional"]; html [label="--out HTML or guidance"]; serv [label="server::serve"]; route [label="route"]; json [label="HTTP JSON DTOs"]; scrub2 [label="secrets::scrub"]; snap [label="serde_json pretty snapshot"]; snapfile [label="snapshot JSON schema"];
+  dmap -> render -> html; dmap -> play -> html; dmap -> serv -> route -> json -> scrub2; dmap -> snap -> snapfile;
+  old [label="old snapshot JSON"]; new [label="new snapshot JSON"]; po [label="from_str old DungeonMap"]; pn [label="from_str new DungeonMap"]; diff [label="diff_maps"]; mapdiff [label="MapDiff"]; rep [label="render_report"];
+  old -> po -> diff; new -> pn -> diff; diff -> mapdiff -> rep;
+  mpath [label="memory path"]; mload [label="GraphMemory::load"]; gm [label="GraphMemory nodes edges"]; record [label="record_room remember_resource record_intent record_friction remember_capability"]; recall [label="recall summary"]; msave [label="GraphMemory::save"]; cpath [label="capabilities.tsv path"]; cload [label="CapabilityRegistry::load"]; reg [label="CapabilityRegistry"]; derive [label="derive help via AzRunner"]; apply [label="apply_learned or learn_group"]; csave [label="CapabilityRegistry::save"];
+  mpath -> mload -> gm; world -> record -> gm; gm -> recall; gm -> msave -> mpath; cpath -> cload -> reg -> derive -> apply -> reg; reg -> csave -> cpath; reg -> record;
+  input [label="az output, help text, memory labels content, HTTP JSON"]; scrub [label="secrets::scrub"]; safeout [label="safe printed output"]; safestore [label="safe persisted state"];
+  azout -> input; derive -> input; json -> input; gm -> input; input -> scrub -> safeout; scrub -> safestore;
+}

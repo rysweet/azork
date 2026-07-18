@@ -1,0 +1,41 @@
+graph TD
+  cap_mod[capabilities/mod.rs]
+  capability[Capability struct]
+  registry_mod[registry.rs]
+  registry[CapabilityRegistry]
+  derive_mod[derive.rs]
+  help_entry[HelpEntry]
+  parser_section[parse_section parse_entry split_status]
+  autodiscover_mod[autodiscover.rs]
+  group_result[GroupResult]
+  applied_group[AppliedGroup]
+  env[AUTODISCOVER_ENV]
+  az_runner[AzRunner]
+  secrets[secrets::scrub]
+  cache[capabilities.tsv cache]
+  memory[GraphMemory remember_capability]
+  main_learn[main::learn]
+  main_drain[main::drain_discovery]
+
+  cap_mod --> capability
+  cap_mod --> registry_mod
+  cap_mod --> derive_mod
+  cap_mod --> autodiscover_mod
+  registry_mod --> registry
+  registry --> cache
+  registry --> derive_mod
+  registry --> capability
+  derive_mod --> help_entry
+  derive_mod --> parser_section
+  derive_mod --> az_runner
+  derive_mod --> secrets
+  autodiscover_mod --> group_result
+  autodiscover_mod --> applied_group
+  autodiscover_mod --> env
+  autodiscover_mod --> derive_mod
+  autodiscover_mod --> registry
+  main_learn --> registry
+  main_learn --> memory
+  main_drain --> autodiscover_mod
+  main_drain --> registry
+  main_drain --> memory

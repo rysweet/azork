@@ -1,0 +1,45 @@
+graph TD
+  backend_mod[backend/mod.rs]
+  trait_backend[Backend trait]
+  select[select and is_recognized]
+  mock_env[mock_backend_from_env]
+  mock[backend/mock.rs MockBackend]
+  fixed[MockWorldSpec Fixed]
+  sized[MockWorldSpec Sized]
+  mock_gen[backend/mock_gen.rs]
+  params[MockSizeParams parse from_env]
+  presets[MockSizePreset small medium large huge]
+  rng[SplitMix64 Rng]
+  gen_world[generate_world]
+  fake_runner[fake_runner for crawl]
+  az[backend/az.rs AzBackend]
+  az_runner[AzRunner trait]
+  process_runner[ProcessAzRunner]
+  world[world::World Room Resource]
+  parser[parser::Direction]
+  concurrency[dungeon::concurrency backoff]
+  secrets[secrets::scrub]
+
+  backend_mod --> trait_backend
+  backend_mod --> select
+  select --> az
+  select --> mock_env
+  mock_env --> mock
+  mock_env --> mock_gen
+  mock --> fixed
+  mock --> sized
+  mock --> world
+  mock --> parser
+  sized --> params
+  mock_gen --> params
+  mock_gen --> presets
+  mock_gen --> rng
+  mock_gen --> gen_world
+  mock_gen --> fake_runner
+  gen_world --> world
+  fake_runner --> az_runner
+  az --> az_runner
+  az --> process_runner
+  az --> world
+  az --> concurrency
+  az --> secrets
