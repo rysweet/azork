@@ -221,14 +221,26 @@ impl Drop for ServerHandle {
 /// the listener is bound and accepting, handing back a [`ServerHandle`] with
 /// the resolved address.
 pub fn serve(map: DungeonMap, bind_addr: &str) -> io::Result<ServerHandle> {
-    let listener = TcpListener::bind(bind_addr)?;
-    let addr = listener.local_addr()?;
-    if !addr.ip().is_loopback() {
+    // Validate loopback-only *before* ever binding a socket: parsing
+    // `bind_addr` and checking `is_loopback()` here means a non-loopback
+    // address (e.g. a wildcard `0.0.0.0`) is rejected without a listening
+    // socket ever having been created, closing the window where a
+    // caller-provided address could bind before this guardrail ran.
+    let requested_addr: SocketAddr = bind_addr.parse().map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid bind address {bind_addr:?}: {e}"),
+        )
+    })?;
+    if !requested_addr.ip().is_loopback() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("refusing to bind to non-loopback address {addr}: Dungeon Crawler Mode's embedded server must only ever listen on 127.0.0.1"),
+            format!("refusing to bind to non-loopback address {requested_addr}: Dungeon Crawler Mode's embedded server must only ever listen on 127.0.0.1"),
         ));
     }
+
+    let listener = TcpListener::bind(requested_addr)?;
+    let addr = listener.local_addr()?;
 
     let shutdown_flag = Arc::new(AtomicBool::new(false));
     let thread_flag = Arc::clone(&shutdown_flag);

@@ -1135,6 +1135,35 @@ fn serve_rejects_non_loopback_bind_addresses() {
     assert!(err.to_string().contains("loopback"));
 }
 
+/// Regression test for bug #92 ("server::serve binds the caller-provided
+/// address before validating loopback-only"): `serve()` must validate
+/// `bind_addr.ip().is_loopback()` *before* ever calling `TcpListener::bind`.
+/// We prove this by first occupying the target (non-loopback) address
+/// ourselves with a real listener, then calling `serve()` on that same
+/// address. If `serve()` validated loopback-ness first (the fixed
+/// ordering), it must return our custom "loopback" refusal without ever
+/// attempting to bind. If it instead tried to bind first (the pre-fix
+/// ordering), the OS would reject that attempt with an "address in use"
+/// error instead — a different error than our own validation produces.
+#[test]
+fn serve_never_binds_a_non_loopback_socket_before_rejecting_it() {
+    let occupied =
+        std::net::TcpListener::bind("0.0.0.0:0").expect("failed to occupy a test port on 0.0.0.0");
+    let addr = format!("0.0.0.0:{}", occupied.local_addr().unwrap().port());
+
+    let err = match server::serve(small_map(), &addr) {
+        Ok(_) => panic!("wildcard bind must be rejected"),
+        Err(err) => err,
+    };
+    assert!(
+        err.to_string().contains("loopback"),
+        "serve() must reject a non-loopback address via its own loopback \
+         check before ever attempting to bind (got: {err})"
+    );
+
+    drop(occupied);
+}
+
 // ---------------------------------------------------------------------------
 // playwright: optional, always-degrading renderer
 // ---------------------------------------------------------------------------
