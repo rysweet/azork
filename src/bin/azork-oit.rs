@@ -434,6 +434,12 @@ fn drive_azork(bin: &Path, scratch: &Path, backend: &str, script: &[String]) -> 
         .arg("--backend")
         .arg(backend)
         .env("AZORK_CACHE_DIR", scratch)
+        // Belt-and-braces offline guarantee: even though the mock backend
+        // itself now routes `learn <group>` through a stubbed az runner
+        // (see `mock_learn_runner` in `src/main.rs`), also disable startup
+        // autodiscovery outright so a `--dry-run` campaign never spawns a
+        // background thread that shells out to the real `az` binary.
+        .env("AZORK_AUTODISCOVER", "0")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

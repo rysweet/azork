@@ -105,6 +105,77 @@ fn dry_run_writes_a_friction_report_with_expected_sections() {
     let _ = std::fs::remove_file(&report);
 }
 
+/// Regression test for bug #91 ("OIT --dry-run is not offline: it can invoke
+/// the real az binary"): put a fake, sentinel-writing `az` executable first
+/// on `PATH` and run `azork-oit --dry-run`. The dry-run catalog includes
+/// `learn group` / `learn storage` (see `src/oit/usecases.rs`), which used to
+/// reach the real `az` CLI via `derive_group_capabilities` ->
+/// `ProcessAzRunner` (root cause a), and startup autodiscovery used to run by
+/// default and do the same (root cause b). If either path fired, the
+/// sentinel file would exist after the run. It must not.
+#[test]
+fn dry_run_never_invokes_the_real_az_binary() {
+    let fake_bin_dir = std::env::temp_dir().join(format!(
+        "azork-oit-fakebin-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&fake_bin_dir).expect("create fake bin dir");
+    let sentinel = fake_bin_dir.join("az-was-invoked.marker");
+
+    // A fake `az` that, if ever executed, records the fact and prints
+    // something a real `az --help`/`az <group> --help` would never say, then
+    // exits non-zero (as it should never even be reached).
+    let fake_az_path = fake_bin_dir.join("az");
+    std::fs::write(
+        &fake_az_path,
+        format!(
+            "#!/bin/sh\ntouch '{}'\necho 'FAKE AZ WAS INVOKED' 1>&2\nexit 1\n",
+            sentinel.display()
+        ),
+    )
+    .expect("write fake az script");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&fake_az_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&fake_az_path, perms).unwrap();
+    }
+
+    // Put the fake bin dir first on PATH so it shadows any real `az` the host
+    // may have installed; the spawned `azork` (and its own children, if any)
+    // inherit this PATH.
+    let real_path = std::env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin_dir.display(), real_path);
+
+    let report = temp_report("no-real-az");
+    let out = Command::new(oit_binary())
+        .arg("--dry-run")
+        .arg("--report")
+        .arg(&report)
+        .env("PATH", &test_path)
+        .output()
+        .expect("failed to spawn azork-oit binary");
+
+    assert!(
+        out.status.success(),
+        "azork-oit --dry-run should still exit 0 with a shadowed az; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !sentinel.exists(),
+        "the fake `az` binary was invoked during --dry-run: this means the \
+         dry-run campaign shelled out to `az` instead of staying offline"
+    );
+
+    let _ = std::fs::remove_file(&report);
+    let _ = std::fs::remove_dir_all(&fake_bin_dir);
+}
+
 #[test]
 fn dry_run_never_creates_live_resource_groups() {
     let report = temp_report("no-rg");
