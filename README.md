@@ -519,6 +519,7 @@ Full documentation lives in [`docs/`](docs/):
 - [Security policy](SECURITY.md) — threat model, guarantees, and how to report vulnerabilities.
 - [Security audit](docs/SECURITY-AUDIT.md) — findings, fixes, and verification results.
 - [Carl OIT campaign](docs/CARL-OIT-CAMPAIGN.md) — the outside-in, black-box product-testing process run against the built binary.
+- [Code Atlas](docs/atlas/index.md) — regeneratable, 8-layer architecture map (repo surface, symbol bindings, deps, runtime topology, API contracts, data flow, service components, user journeys), plus a Kuzu/OpenCypher graph model for structural bug hunting.
 
 ## License
 
