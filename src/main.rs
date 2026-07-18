@@ -209,8 +209,18 @@ fn main() {
     // Remember where we start so navigation memory has an anchor.
     record_room(&mut memory, &world);
 
-    // Live derivation runs through the real `az` CLI at runtime.
-    let runner = ProcessAzRunner::new();
+    // Live derivation runs through the real `az` CLI at runtime — except when
+    // the offline mock backend was selected (`--backend mock`, the default),
+    // in which case `learn <group>` must stay offline too: it uses a stubbed
+    // [`FakeAzRunner`] with canned `--help` text instead of ever shelling out
+    // to the real `az` binary. This closes the gap where `azork --backend
+    // mock` (as used by `azork-oit --dry-run`) could still invoke a live
+    // `az` process via `learn group`/`learn storage`.
+    let runner: Box<dyn AzRunner> = if backend_id == "mock" {
+        Box::new(mock_learn_runner())
+    } else {
+        Box::new(ProcessAzRunner::new())
+    };
 
     // Startup auto-discovery: proactively learn any `az` groups missing from
     // the (just-recalled) cache, without the player typing `learn`. Runs on
@@ -269,7 +279,7 @@ fn main() {
             &mut lines,
             &mut registry,
             &mut memory,
-            &runner,
+            runner.as_ref(),
             &cache_path,
         );
         // Keep navigation memory in step with wherever we now stand.
@@ -417,6 +427,21 @@ fn resolve_backend_id() -> Option<String> {
         i += 1;
     }
     std::env::var("AZORK_BACKEND").ok()
+}
+
+/// Build a stubbed [`FakeAzRunner`] used for `learn <group>` when the offline
+/// mock backend is selected (`--backend mock`), so learning stays genuinely
+/// offline instead of shelling out to a real `az` binary. Carries canned
+/// `--help` text for the handful of groups the mock estate and OIT dry-run
+/// catalog exercise (`group`, `storage`); any other group simply reports "no
+/// canned response" rather than falling back to the real CLI.
+fn mock_learn_runner() -> FakeAzRunner {
+    const GROUP_HELP: &str = "\nGroup\n    az group : Manage resource groups and template deployments.\n\nCommands:\n    create : Create a new resource group.\n    delete : Delete a resource group.\n    list   : List resource groups.\n    show   : Get the details of a resource group.\n";
+    const STORAGE_HELP: &str = "\nGroup\n    az storage : Manage Azure Cloud Storage.\n\nCommands:\n    list : List storage accounts.\n    show : Show properties for a storage account.\n";
+
+    FakeAzRunner::new()
+        .with(&["group", "--help"], GROUP_HELP)
+        .with(&["storage", "--help"], STORAGE_HELP)
 }
 
 /// Handle a single command. Returns `true` if the player asked to quit.
