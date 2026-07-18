@@ -573,7 +573,8 @@ returns a refusal error immediately and no socket is ever opened — there is no
 window, however brief, during which a non-loopback listener could accept a
 connection. This validate-then-bind ordering is enforced by a unit test that
 asserts `serve()` rejects a non-loopback address and that no bind is
-attempted (see `src/dungeon/server.rs`).
+attempted (see `serve_never_binds_a_non_loopback_socket_before_rejecting_it`
+in `tests/dungeon_tests.rs`).
 
 ## The JSON API
 

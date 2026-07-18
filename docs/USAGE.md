@@ -401,15 +401,15 @@ Two things combine to make this true:
    dry-run catalog exercises `learn group` or `learn storage` (or any other
    capability-derive use case), it does so through a fake/mock `az` runner
    that returns canned, offline capability data instead of the real
-   `az_runner::Runner`, which is what would otherwise call
-   `Command::new("az")`. The real `Runner` is only ever constructed on the
-   live (non-`--dry-run`) path.
+   `ProcessAzRunner`, which is what would otherwise call
+   `Command::new("az")`. The real `ProcessAzRunner` is only ever constructed
+   on the live (non-`--dry-run`) path.
 
 The net effect: a `--dry-run` campaign is safe to run with no `az` CLI
 installed, no network access, and no Azure credentials configured at all —
-and this is verified by a regression test that asserts zero invocations of the
-real `az` binary across an entire dry-run campaign (see
-`src/oit/usecases.rs`).
+and this is verified by a regression test that asserts zero invocations of
+the real `az` binary across an entire dry-run campaign (see
+`dry_run_never_invokes_the_real_az_binary` in `tests/oit_binary_tests.rs`).
 
 Every live run is bound by hard guardrails enforced in code
 (`src/oit/guardrails.rs`), not merely by convention:
